@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAgentStore } from '@/store/agent-store';
 import type { AgentEvent } from '@rigelhq/shared';
+import { AGENT_ROLE_MAP } from '@rigelhq/shared';
 
 const ORCHESTRATOR_URL = process.env.NEXT_PUBLIC_ORCHESTRATOR_URL ?? 'http://localhost:4000';
 
@@ -27,11 +28,23 @@ export function useSocket() {
     socket.on('connect', () => {
       console.log('[WS] Connected to orchestrator');
       setConnected(true);
+      addMessage({
+        id: `sys-${Date.now()}`,
+        sender: 'system',
+        content: 'Connected to RigelHQ Orchestrator',
+        timestamp: Date.now(),
+      });
     });
 
     socket.on('disconnect', () => {
       console.log('[WS] Disconnected from orchestrator');
       setConnected(false);
+      addMessage({
+        id: `sys-${Date.now()}`,
+        sender: 'system',
+        content: 'Disconnected from orchestrator — reconnecting...',
+        timestamp: Date.now(),
+      });
     });
 
     // Receive event history on connect
@@ -47,11 +60,12 @@ export function useSocket() {
 
       // Add assistant text to chat
       if (event.stream === 'assistant' && event.data.text) {
+        const roleMeta = AGENT_ROLE_MAP.get(event.agentId);
         addMessage({
           id: event.id,
           sender: 'agent',
           agentId: event.agentId,
-          agentName: event.agentId,
+          agentName: roleMeta?.name ?? event.agentId,
           content: event.data.text as string,
           timestamp: event.timestamp,
         });

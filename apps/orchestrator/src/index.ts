@@ -7,6 +7,7 @@ import { AgentManager } from './services/agent-manager.js';
 import { TaskManager } from './services/task-manager.js';
 import { CEAManager } from './services/cea-manager.js';
 import { WebSocketServer } from './services/websocket-server.js';
+import { MockSimulation } from './services/mock-simulation.js';
 import { createAdapter } from './adapters/index.js';
 
 async function main() {
@@ -38,12 +39,23 @@ async function main() {
   const httpServer = http.createServer();
   const wsServer = new WebSocketServer(httpServer, eventBus);
 
+  // Wire CEA to WebSocket for chat message routing
+  wsServer.setCEAManager(ceaManager);
+
   httpServer.listen(config.RIGELHQ_ORCHESTRATOR_PORT, () => {
     console.log(`[RigelHQ Orchestrator] WebSocket server on port ${config.RIGELHQ_ORCHESTRATOR_PORT}`);
   });
 
   // Start CEA
   await ceaManager.start();
+
+  // Start mock simulation in dev mode for a living office feel
+  let mockSim: MockSimulation | null = null;
+  if (config.RIGELHQ_ADAPTER === 'mock') {
+    mockSim = new MockSimulation(agentManager);
+    mockSim.start();
+    console.log('[RigelHQ Orchestrator] Mock simulation active — agents will come alive');
+  }
 
   console.log('[RigelHQ Orchestrator] Ready');
 
@@ -60,6 +72,7 @@ async function main() {
       process.exit(1);
     }, 30_000);
 
+    if (mockSim) mockSim.stop();
     await ceaManager.stop();
     await agentManager.stopAll();
 

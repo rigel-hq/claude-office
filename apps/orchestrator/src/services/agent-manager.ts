@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { AgentEvent, AgentStatus } from '@rigelhq/shared';
+import { AGENT_ROLE_MAP } from '@rigelhq/shared';
 import type { GatewayAdapter, AgentHandle } from '../adapters/adapter.js';
 import type { EventBus } from './event-bus.js';
 
@@ -81,15 +82,21 @@ export class AgentManager {
 
     this.active.set(configId, activeAgent);
 
+    // Resolve agent metadata from roles registry
+    const roleMeta = AGENT_ROLE_MAP.get(configId);
+    const agentName = roleMeta?.name ?? configId;
+    const agentRole = roleMeta?.role ?? configId;
+    const agentIcon = roleMeta?.icon ?? '🤖';
+
     // Update DB
     await this.db.agent.upsert({
       where: { configId },
       update: { status: 'THINKING', startedAt: new Date(), pid: handle.pid },
       create: {
         configId,
-        name: configId,
-        role: configId,
-        icon: '🤖',
+        name: agentName,
+        role: agentRole,
+        icon: agentIcon,
         status: 'THINKING',
         startedAt: new Date(),
         pid: handle.pid,
