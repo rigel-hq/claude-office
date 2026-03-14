@@ -1,5 +1,5 @@
-import type { AgentEvent, EventStream } from '../types/events';
-import { generateEventId } from './id-generator';
+import type { AgentEvent, EventStream } from '../types/events.js';
+import { generateEventId } from './id-generator.js';
 
 export function createAgentEvent(
   agentId: string,

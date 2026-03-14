@@ -1,2 +1,2 @@
-export * from './id-generator';
-export * from './event-helpers';
+export * from './id-generator.js';
+export * from './event-helpers.js';
