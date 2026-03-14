@@ -1,0 +1,15 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-rigel-bg: #0f1419;
+  --color-rigel-surface: #161b22;
+  --color-rigel-border: #30363d;
+  --color-rigel-text: #c9d1d9;
+  --color-rigel-muted: #8b949e;
+  --color-rigel-blue: #58a6ff;
+  --color-rigel-green: #3fb950;
+  --color-rigel-orange: #f0883e;
+  --color-rigel-purple: #d2a8ff;
+  --color-rigel-cyan: #56d4dd;
+  --color-rigel-red: #f85149;
+}
