@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id              String          @id @default(cuid())
+  configId        String          @unique
+  name            String
+  role            String
+  icon            String
+  status          AgentStatus     @default(OFFLINE)
+  pid             Int?
+  startedAt       DateTime?
+  metadata        Json?
+  tasks           Task[]          @relation("AssignedAgent")
+  createdTasks    Task[]          @relation("CreatedBy")
+  messages        Message[]
+  activityLogs    ActivityLog[]
+  parentId        String?
+  parent          Agent?          @relation("SubAgents", fields: [parentId], references: [id])
+  children        Agent[]         @relation("SubAgents")
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model Task {
+  id              String          @id @default(cuid())
+  title           String
+  description     String?
+  status          TaskStatus      @default(PENDING)
+  priority        TaskPriority    @default(MEDIUM)
+  assignedAgentId String?
+  assignedAgent   Agent?          @relation("AssignedAgent", fields: [assignedAgentId], references: [id])
+  createdById     String
+  createdBy       Agent           @relation("CreatedBy", fields: [createdById], references: [id])
+  parentTaskId    String?
+  parentTask      Task?           @relation("SubTasks", fields: [parentTaskId], references: [id])
+  subTasks        Task[]          @relation("SubTasks")
+  projectId       String?
+  project         Project?        @relation(fields: [projectId], references: [id])
+  result          Json?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model Message {
+  id              String          @id @default(cuid())
+  conversationId  String
+  conversation    Conversation    @relation(fields: [conversationId], references: [id])
+  senderId        String?
+  sender          Agent?          @relation(fields: [senderId], references: [id])
+  senderType      SenderType
+  content         String
+  messageType     MessageType
+  metadata        Json?
+  createdAt       DateTime        @default(now())
+}
+
+model Conversation {
+  id              String          @id @default(cuid())
+  title           String?
+  participants    String[]
+  status          ConversationStatus @default(ACTIVE)
+  messages        Message[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model ActivityLog {
+  id              String          @id @default(cuid())
+  agentId         String
+  agent           Agent           @relation(fields: [agentId], references: [id])
+  eventType       String
+  payload         Json
+  timestamp       DateTime        @default(now())
+}
+
+model Project {
+  id              String          @id @default(cuid())
+  name            String
+  description     String?
+  repoUrl         String?
+  status          ProjectStatus   @default(ACTIVE)
+  tasks           Task[]
+  agentsAssigned  String[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model AgentOverride {
+  id              String          @id @default(cuid())
+  agentConfigId   String
+  overrideKey     String
+  overrideValue   Json
+  updatedAt       DateTime        @updatedAt
+
+  @@unique([agentConfigId, overrideKey])
+}
+
+enum AgentStatus {
+  OFFLINE
+  IDLE
+  THINKING
+  TOOL_CALLING
+  SPEAKING
+  COLLABORATING
+  ERROR
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  IN_REVIEW
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum TaskPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum SenderType {
+  USER
+  AGENT
+  SYSTEM
+}
+
+enum MessageType {
+  CHAT
+  COMMAND
+  REPORT
+  VOICE
+}
+
+enum ConversationStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProjectStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
