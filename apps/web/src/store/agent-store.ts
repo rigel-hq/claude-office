@@ -8,12 +8,12 @@ import { AGENT_ROLES } from '@rigelhq/shared';
 
 enableMapSet();
 
-// Zone layout positions for agents
+// Zone layout positions for 1200x700 office floor
 const ZONE_POSITIONS: Record<string, { baseX: number; baseY: number }> = {
-  executive: { baseX: 120, baseY: 100 },
-  engineering: { baseX: 500, baseY: 100 },
-  ops: { baseX: 500, baseY: 380 },
-  quality: { baseX: 120, baseY: 380 },
+  executive: { baseX: 130, baseY: 130 },
+  engineering: { baseX: 700, baseY: 130 },
+  quality: { baseX: 130, baseY: 470 },
+  ops: { baseX: 700, baseY: 470 },
 };
 
 export interface AgentState {
@@ -71,7 +71,7 @@ export const useAgentStore = create<AgentStore>()(
           const idx = zoneCounters[zone];
           const base = ZONE_POSITIONS[zone] ?? { baseX: 300, baseY: 300 };
 
-          // Grid layout within zone: 3 columns
+          // Grid layout within zone: 3 columns, desk spacing
           const col = (idx - 1) % 3;
           const row = Math.floor((idx - 1) / 3);
 
@@ -84,8 +84,8 @@ export const useAgentStore = create<AgentStore>()(
             status: 'OFFLINE',
             mvpActive: role.mvpActive,
             position: {
-              x: base.baseX + col * 100,
-              y: base.baseY + row * 80,
+              x: base.baseX + col * 180,
+              y: base.baseY + row * 120,
             },
             currentTool: null,
             speechBubble: null,

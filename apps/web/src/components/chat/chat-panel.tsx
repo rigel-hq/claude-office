@@ -29,12 +29,7 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-rigel-surface border-l border-rigel-border">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-rigel-border">
-        <h2 className="text-sm font-semibold text-rigel-text">Chat</h2>
-        <p className="text-xs text-rigel-muted mt-0.5">Talk to your agents directly</p>
-      </div>
+    <div className="flex flex-col h-full bg-rigel-surface">
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3">
