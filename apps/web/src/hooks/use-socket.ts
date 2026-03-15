@@ -42,7 +42,7 @@ export function useSocket() {
       addMessage({
         id: `sys-${Date.now()}`,
         sender: 'system',
-        content: 'Disconnected from orchestrator — reconnecting...',
+        content: 'Disconnected from orchestrator \u2014 reconnecting...',
         timestamp: Date.now(),
       });
     });
@@ -77,9 +77,9 @@ export function useSocket() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const sendMessage = (content: string) => {
+  const sendMessage = (content: string, targetAgent?: string) => {
     if (socketRef.current?.connected) {
-      socketRef.current.emit('chat:message', { content });
+      socketRef.current.emit('chat:message', { content, targetAgent });
       addMessage({
         id: `user-${Date.now()}`,
         sender: 'user',

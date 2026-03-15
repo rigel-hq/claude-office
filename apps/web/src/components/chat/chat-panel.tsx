@@ -1,16 +1,22 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useAgentStore } from '@/store/agent-store';
+import { AGENT_ROLES } from '@rigelhq/shared';
 import { ChatInput } from './chat-input';
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export function ChatPanel({ onSend }: { onSend: (message: string) => void }) {
+interface ChatPanelProps {
+  onSend: (message: string, targetAgent?: string) => void;
+}
+
+export function ChatPanel({ onSend }: ChatPanelProps) {
   const messages = useAgentStore((s) => s.messages);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [selectedAgent, setSelectedAgent] = useState('cea');
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -18,12 +24,16 @@ export function ChatPanel({ onSend }: { onSend: (message: string) => void }) {
     }
   }, [messages.length]);
 
+  const handleSend = (content: string) => {
+    onSend(content, selectedAgent === 'cea' ? undefined : selectedAgent);
+  };
+
   return (
     <div className="flex flex-col h-full bg-rigel-surface border-l border-rigel-border">
       {/* Header */}
       <div className="px-4 py-3 border-b border-rigel-border">
         <h2 className="text-sm font-semibold text-rigel-text">Chat</h2>
-        <p className="text-xs text-rigel-muted mt-0.5">Talk to CEA and your agents</p>
+        <p className="text-xs text-rigel-muted mt-0.5">Talk to your agents directly</p>
       </div>
 
       {/* Messages */}
@@ -57,8 +67,13 @@ export function ChatPanel({ onSend }: { onSend: (message: string) => void }) {
         ))}
       </div>
 
-      {/* Input */}
-      <ChatInput onSend={onSend} />
+      {/* Input with agent selector */}
+      <ChatInput
+        onSend={handleSend}
+        agents={AGENT_ROLES}
+        selectedAgent={selectedAgent}
+        onSelectAgent={setSelectedAgent}
+      />
     </div>
   );
 }

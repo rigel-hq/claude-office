@@ -39,8 +39,9 @@ async function main() {
   const httpServer = http.createServer();
   const wsServer = new WebSocketServer(httpServer, eventBus);
 
-  // Wire CEA to WebSocket for chat message routing
+  // Wire CEA and AgentManager to WebSocket for chat message routing
   wsServer.setCEAManager(ceaManager);
+  wsServer.setAgentManager(agentManager);
 
   httpServer.listen(config.RIGELHQ_ORCHESTRATOR_PORT, () => {
     console.log(`[RigelHQ Orchestrator] WebSocket server on port ${config.RIGELHQ_ORCHESTRATOR_PORT}`);
