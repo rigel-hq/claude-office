@@ -55,26 +55,33 @@ export function ChatBar({ onSend }: ChatBarProps) {
     audioContext: ttsAudioCtx,
   });
 
-  // ── Mic toggle ────────────────────────────────────────────
-  const toggleVoiceMode = useCallback(async () => {
-    if (isVoiceMode) {
-      voice.stop();
-      tts.stop();
-      if (ttsAudioCtx) {
-        ttsAudioCtx.close();
-      }
-      setTtsAudioCtx(null);
-      setIsVoiceMode(false);
-      setVoiceTranscript('');
-      setVoiceError(null);
-    } else {
-      const ctx = new AudioContext();
-      setTtsAudioCtx(ctx);
-      setIsVoiceMode(true);
-      setVoiceError(null);
-      await voice.start();
+  // ── Exit voice mode ────────────────────────────────────────
+  const exitVoiceMode = useCallback(() => {
+    voice.stop();
+    tts.stop();
+    if (ttsAudioCtx) {
+      ttsAudioCtx.close();
     }
-  }, [isVoiceMode, voice, tts, ttsAudioCtx]);
+    setTtsAudioCtx(null);
+    setIsVoiceMode(false);
+    setVoiceTranscript('');
+    setVoiceError(null);
+  }, [voice, tts, ttsAudioCtx]);
+
+  // ── Enter voice mode ──────────────────────────────────────
+  const enterVoiceMode = useCallback(async () => {
+    const ctx = new AudioContext();
+    setTtsAudioCtx(ctx);
+    setIsVoiceMode(true);
+    setVoiceError(null);
+  }, []);
+
+  // ── Tap mic to speak (while in voice mode) ────────────────
+  const tapToSpeak = useCallback(async () => {
+    if (voice.isListening || tts.isSpeaking) return; // already busy
+    setVoiceTranscript('');
+    await voice.start();
+  }, [voice, tts.isSpeaking]);
 
   // ── Welcome message when voice mode activates ─────────────
   useEffect(() => {
@@ -87,16 +94,18 @@ export function ChatBar({ onSend }: ChatBarProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVoiceMode, ttsAudioCtx]);
 
-  // ── Mic/TTS coordination — pause mic during playback ─────
+  // ── Auto-listen after welcome TTS finishes ────────────────
+  const hasPlayedWelcome = useRef(false);
   useEffect(() => {
-    if (!isVoiceMode) return;
-    if (tts.isSpeaking) {
-      voice.stop();
-    } else {
+    if (isVoiceMode && !tts.isSpeaking && !voice.isListening && !hasPlayedWelcome.current) {
+      hasPlayedWelcome.current = true;
       voice.start();
     }
+    if (!isVoiceMode) {
+      hasPlayedWelcome.current = false;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tts.isSpeaking]);
+  }, [tts.isSpeaking, isVoiceMode]);
 
   // ── TTS trigger for new agent messages ────────────────────
   useEffect(() => {
@@ -222,12 +231,31 @@ export function ChatBar({ onSend }: ChatBarProps) {
 
           {/* Voice bar OR text input */}
           {isVoiceMode ? (
-            <VoiceBar
-              isListening={voice.isListening}
-              isSpeaking={tts.isSpeaking}
-              transcript={voiceTranscript}
-              onStop={toggleVoiceMode}
-            />
+            <>
+              <VoiceBar
+                isListening={voice.isListening}
+                isSpeaking={tts.isSpeaking}
+                transcript={voiceTranscript}
+                onStop={exitVoiceMode}
+              />
+
+              {/* Tap-to-speak mic button (visible when idle in voice mode) */}
+              {!voice.isListening && !tts.isSpeaking && (
+                <button
+                  type="button"
+                  onClick={tapToSpeak}
+                  className="flex-shrink-0 p-2 text-green-400 hover:text-green-300 transition-colors"
+                  title="Tap to speak"
+                >
+                  <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+                    <path d="M8 1a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0v-4A2.5 2.5 0 0 0 8 1Z"
+                      stroke="currentColor" strokeWidth="1.3" fill="currentColor" fillOpacity="0.15" />
+                    <path d="M4 7v.5a4 4 0 0 0 8 0V7M8 12.5V14M6 14h4"
+                      stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  </svg>
+                </button>
+              )}
+            </>
           ) : (
             <>
               {/* Message input */}
@@ -255,11 +283,11 @@ export function ChatBar({ onSend }: ChatBarProps) {
                 </button>
               )}
 
-              {/* Mic button */}
+              {/* Mic button — enter voice mode */}
               {voiceConfig.enabled && (
                 <button
                   type="button"
-                  onClick={toggleVoiceMode}
+                  onClick={enterVoiceMode}
                   className="p-2 text-rigel-muted hover:text-rigel-text transition-colors"
                   title="Voice mode"
                 >

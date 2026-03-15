@@ -32,11 +32,13 @@ export function VoiceBar({
   transcript,
   onStop,
 }: VoiceBarProps) {
+  const isIdle = !isSpeaking && !isListening;
+
   const statusText = isSpeaking
     ? 'Speaking...'
     : isListening
       ? 'Listening...'
-      : 'Paused';
+      : 'Tap mic to speak';
 
   const statusColor = isSpeaking
     ? 'text-purple-400'
@@ -67,8 +69,8 @@ export function VoiceBar({
 
       {/* Transcript preview */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-rigel-text truncate">
-          {transcript || (isListening ? 'Say something...' : '')}
+        <p className={`text-sm truncate ${isIdle ? 'text-rigel-muted' : 'text-rigel-text'}`}>
+          {transcript || (isListening ? 'Say something...' : isIdle ? 'Ready for next command' : '')}
         </p>
       </div>
 

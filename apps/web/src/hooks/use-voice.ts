@@ -105,10 +105,9 @@ export function useVoice({
         await sendAudioForTranscription(blob);
       }
 
-      // Auto-restart recording if still in voice mode
-      if (isListeningRef.current && streamRef.current) {
-        startRecording();
-      }
+      // Stop after one utterance — user taps mic again to speak
+      isListeningRef.current = false;
+      setIsListening(false);
     };
 
     recorder.start(250); // collect chunks every 250ms
