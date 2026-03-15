@@ -5,6 +5,7 @@ import { useAgentStore, type AgentState } from '@/store/agent-store';
 import { AGENT_ROLES, AGENT_ROLE_MAP } from '@rigelhq/shared';
 import type { AgentEvent } from '@rigelhq/shared';
 import { SidebarAvatar } from '../office/agent-avatar';
+import { useTheme } from '../theme/theme-provider';
 
 // ── Icons ────────────────────────────────────────────────────
 
@@ -30,13 +31,13 @@ function SearchIcon() {
 // ── Status helpers ────────────────────────────────────────────
 
 const STATUS_DOT_COLORS: Record<string, string> = {
-  OFFLINE: 'bg-gray-500',
-  IDLE: 'bg-green-500',
-  THINKING: 'bg-blue-500',
-  TOOL_CALLING: 'bg-orange-500',
-  SPEAKING: 'bg-purple-500',
-  COLLABORATING: 'bg-cyan-500',
-  ERROR: 'bg-red-500',
+  OFFLINE: 'bg-gray-500/70',
+  IDLE: 'bg-green-600/80',
+  THINKING: 'bg-blue-500/80',
+  TOOL_CALLING: 'bg-amber-600/80',
+  SPEAKING: 'bg-purple-500/80',
+  COLLABORATING: 'bg-cyan-600/80',
+  ERROR: 'bg-red-600/80',
 };
 
 function statusLabel(status: string): string {
@@ -118,11 +119,11 @@ function MetricsPanel() {
 
   return (
     <div className="grid grid-cols-3 gap-2 px-3 py-2">
-      <MetricCard label="Active" value={stats.active} total={stats.total} color="text-green-400" />
-      <MetricCard label="Thinking" value={stats.thinking} color="text-blue-400" />
-      <MetricCard label="Errors" value={stats.errors} color={stats.errors > 0 ? 'text-red-400' : 'text-rigel-muted'} />
+      <MetricCard label="Active" value={stats.active} total={stats.total} color="text-green-500/80" />
+      <MetricCard label="Thinking" value={stats.thinking} color="text-blue-400/80" />
+      <MetricCard label="Errors" value={stats.errors} color={stats.errors > 0 ? 'text-red-400/80' : 'text-rigel-muted'} />
       <div className="col-span-3 flex items-center gap-1.5 mt-1">
-        <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+        <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-600/80 animate-pulse' : 'bg-red-600/80'}`} />
         <span className="text-[10px] text-rigel-muted">
           {connected ? 'Connected to orchestrator' : 'Disconnected'}
         </span>
@@ -146,7 +147,7 @@ function MetricCard({ label, value, total, color }: {
 
 // ── Agent list ───────────────────────────────────────────────
 
-function AgentList() {
+function AgentList({ onOpenTerminal }: { onOpenTerminal?: (configId: string) => void }) {
   const agents = useAgentStore((s) => s.agents);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<TabFilter>('all');
@@ -214,18 +215,19 @@ function AgentList() {
           <div className="text-[10px] text-rigel-muted text-center py-4">No agents match</div>
         )}
         {filtered.map((agent) => (
-          <AgentRow key={agent.configId} agent={agent} />
+          <AgentRow key={agent.configId} agent={agent} onOpenTerminal={onOpenTerminal} />
         ))}
       </div>
     </div>
   );
 }
 
-function AgentRow({ agent }: { agent: AgentState }) {
+function AgentRow({ agent, onOpenTerminal }: { agent: AgentState; onOpenTerminal?: (configId: string) => void }) {
   const dotColor = STATUS_DOT_COLORS[agent.status] ?? 'bg-gray-500';
+  const hasSession = agent.status !== 'OFFLINE';
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-rigel-bg/40 transition-colors cursor-default">
+    <div className="group flex items-center gap-2 px-3 py-1.5 hover:bg-rigel-bg/40 transition-colors cursor-default">
       <SidebarAvatar agentId={agent.configId} size={24} />
       <div className="flex-1 min-w-0">
         <div className="text-xs text-rigel-text truncate">{agent.name}</div>
@@ -234,6 +236,20 @@ function AgentRow({ agent }: { agent: AgentState }) {
       <div className="flex items-center gap-1 flex-shrink-0">
         <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
         <span className="text-[10px] text-rigel-muted">{statusLabel(agent.status)}</span>
+        {/* View Session terminal button — appears on hover for active agents */}
+        {hasSession && onOpenTerminal && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenTerminal(agent.configId); }}
+            className="ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-rigel-blue/20 text-rigel-muted hover:text-rigel-blue transition-all"
+            title={`View ${agent.name}'s session in terminal`}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M4 7l2.5 2L4 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M8.5 11H12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );
@@ -242,17 +258,17 @@ function AgentRow({ agent }: { agent: AgentState }) {
 // ── Event timeline ───────────────────────────────────────────
 
 const STREAM_COLORS: Record<string, string> = {
-  lifecycle: 'border-gray-500',
-  tool: 'border-orange-500',
-  assistant: 'border-purple-500',
-  error: 'border-red-500',
+  lifecycle: 'border-gray-600',
+  tool: 'border-amber-700',
+  assistant: 'border-purple-600',
+  error: 'border-red-700',
 };
 
 const STREAM_TEXT_COLORS: Record<string, string> = {
   lifecycle: 'text-rigel-muted',
-  tool: 'text-orange-400',
-  assistant: 'text-purple-400',
-  error: 'text-red-400',
+  tool: 'text-amber-500/80',
+  assistant: 'text-purple-400/80',
+  error: 'text-red-400/80',
 };
 
 function summarizeEvent(event: AgentEvent): string {
@@ -324,9 +340,36 @@ function EventTimeline() {
   );
 }
 
+// ── Theme toggle ─────────────────────────────────────────────
+
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+
+  return (
+    <button
+      onClick={toggleTheme}
+      className="p-1.5 rounded-md hover:bg-rigel-bg/60 text-rigel-muted hover:text-rigel-text transition-colors"
+      title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+    >
+      {theme === 'dark' ? (
+        /* Sun icon */
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+        </svg>
+      ) : (
+        /* Moon icon */
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M13.36 10.06A6 6 0 015.94 2.64 6 6 0 1013.36 10.06z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 // ── Main sidebar ─────────────────────────────────────────────
 
-export function Sidebar() {
+export function Sidebar({ onOpenTerminal }: { onOpenTerminal?: (configId: string) => void } = {}) {
   const agents = useAgentStore((s) => s.agents);
   const events = useAgentStore((s) => s.events);
 
@@ -336,13 +379,10 @@ export function Sidebar() {
 
   return (
     <div className="flex flex-col h-full bg-rigel-surface border-l border-rigel-border">
-      {/* Sidebar header */}
-      <div className="px-3 py-2.5 border-b border-rigel-border">
-        <div className="flex items-center gap-2">
-          <span className="text-base">⬡</span>
-          <span className="text-sm font-bold text-rigel-blue tracking-tight">RigelHQ</span>
-          <span className="text-[10px] text-rigel-muted">Command Center</span>
-        </div>
+      {/* Sidebar header with theme toggle */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-rigel-border">
+        <span className="text-xs font-semibold text-rigel-muted uppercase tracking-wider">Dashboard</span>
+        <ThemeToggle />
       </div>
 
       {/* Scrollable sections */}
@@ -352,7 +392,7 @@ export function Sidebar() {
         </Section>
 
         <Section title="Agents" badge={`${activeCount}/${agents.size}`} defaultOpen={true}>
-          <AgentList />
+          <AgentList onOpenTerminal={onOpenTerminal} />
         </Section>
 
         <Section title="Activity" badge={events.length} defaultOpen={true}>

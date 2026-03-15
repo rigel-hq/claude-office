@@ -69,6 +69,113 @@ export class WebSocketServer {
         }
       });
 
+      // Summarize text for TTS via CEA's summarizer subagent
+      socket.on('voice:summarize', async (data: { text: string }, ack?: (resp: { summary: string }) => void) => {
+        if (!this.ceaManager) {
+          ack?.({ summary: data.text?.slice(0, 200) ?? '' });
+          return;
+        }
+        try {
+          const summary = await this.ceaManager.summarize(data.text);
+          ack?.({ summary });
+        } catch (err) {
+          console.error('[WS] Summarize error:', err);
+          ack?.({ summary: data.text?.slice(0, 200) ?? '' });
+        }
+      });
+
+      // Send a message to any Claude session by ID
+      socket.on('session:send', async (data: { sessionId: string; message: string }) => {
+        if (!this.agentManager) {
+          socket.emit('chat:error', { message: 'Agent manager not available' });
+          return;
+        }
+        try {
+          console.log(`[WS] Sending to session ${data.sessionId.slice(0, 8)}...: ${data.message.slice(0, 80)}`);
+          await this.agentManager.sendToSession(data.sessionId, data.message);
+        } catch (err) {
+          console.error('[WS] Error sending to session:', err);
+          socket.emit('chat:error', { message: `Failed to send to session ${data.sessionId.slice(0, 8)}` });
+        }
+      });
+
+      // Open a terminal window attached to an agent's Claude session
+      socket.on('session:open-terminal', async (data: { configId: string }) => {
+        if (!this.agentManager) {
+          socket.emit('chat:error', { message: 'Agent manager not available' });
+          return;
+        }
+
+        // Try agent manager first, then CEA manager as fallback
+        const handle = this.agentManager.getHandle(data.configId);
+        let sessionId = handle?.sessionId ?? null;
+        let cwd = handle?.cwd ?? null;
+
+        // Fallback: check CEA manager's stored handle (survives active map removal)
+        if (!sessionId && data.configId === 'cea' && this.ceaManager) {
+          const ceaHandle = (this.ceaManager as unknown as { handle?: { sessionId?: string; cwd?: string } }).handle;
+          sessionId = ceaHandle?.sessionId ?? null;
+          cwd = ceaHandle?.cwd ?? cwd;
+        }
+
+        if (!sessionId) {
+          console.log(`[WS] No session found for ${data.configId} — handle: ${JSON.stringify(handle)}`);
+          socket.emit('chat:error', { message: `No active session for ${data.configId}` });
+          return;
+        }
+
+        console.log(`[WS] Opening terminal for ${data.configId} (session: ${sessionId.slice(0, 8)}..., cwd: ${cwd})`);
+
+        try {
+          const { execFile } = await import('child_process');
+          const { writeFileSync, unlinkSync } = await import('fs');
+          const { tmpdir } = await import('os');
+          const path = await import('path');
+
+          // cd to the agent's working directory first so claude --resume finds the session
+          const cdCmd = cwd ? `cd ${cwd.replace(/"/g, '\\"')} && ` : '';
+          const cmd = `${cdCmd}claude --resume ${sessionId}`;
+          const scriptPath = path.join(tmpdir(), `rigel-terminal-${Date.now()}.scpt`);
+
+          // AppleScript to open Terminal.app with the claude resume command
+          const script = [
+            'tell application "Terminal"',
+            '  activate',
+            `  do script "${cmd}"`,
+            'end tell',
+          ].join('\n');
+
+          writeFileSync(scriptPath, script);
+          execFile('osascript', [scriptPath], (err) => {
+            try { unlinkSync(scriptPath); } catch { /* cleanup best effort */ }
+            if (err) {
+              console.error('[WS] AppleScript failed:', err.message);
+              socket.emit('chat:error', { message: 'Failed to open terminal — check macOS permissions for Terminal automation' });
+            } else {
+              console.log(`[WS] Terminal opened for ${data.configId}`);
+            }
+          });
+        } catch (err) {
+          console.error('[WS] Error opening terminal:', err);
+          socket.emit('chat:error', { message: 'Failed to open terminal' });
+        }
+      });
+
+      // List all Claude sessions (managed + external)
+      socket.on('sessions:list', async () => {
+        if (!this.agentManager) {
+          socket.emit('sessions:data', { managed: [], external: [] });
+          return;
+        }
+        try {
+          const sessions = await this.agentManager.listAllSessions();
+          socket.emit('sessions:data', sessions);
+        } catch (err) {
+          console.error('[WS] Error listing sessions:', err);
+          socket.emit('sessions:data', { managed: [], external: [] });
+        }
+      });
+
       socket.on('disconnect', () => {
         console.log(`[WS] Client disconnected: ${socket.id}`);
       });
@@ -89,16 +196,16 @@ export class WebSocketServer {
     if (!this.agentManager) return;
 
     try {
-      const systemPrompt = agentConfigLoader.generateSystemPrompt(agentId);
-
-      // Stop existing run if active (each message gets a fresh agent run)
-      try {
-        await this.agentManager.stopAgent(agentId);
-      } catch {
-        // Agent may not be active — fine
+      // Resume existing session if available
+      if (this.agentManager.hasActiveSession(agentId)) {
+        console.log(`[WS] Resuming session for ${agentId}`);
+        await this.agentManager.sendMessage(agentId, content);
+      } else {
+        // First message — spawn fresh agent
+        console.log(`[WS] Spawning fresh session for ${agentId}`);
+        const systemPrompt = agentConfigLoader.generateSystemPrompt(agentId);
+        await this.agentManager.spawnAgent(agentId, systemPrompt, content);
       }
-
-      await this.agentManager.spawnAgent(agentId, systemPrompt, content);
     } catch (err) {
       console.error(`[WS] Error routing message to agent ${agentId}:`, err);
       socket.emit('chat:error', { message: `Failed to reach ${agentId}` });

@@ -14,7 +14,7 @@ function WaveformBars({ active }: { active: boolean }) {
         <div
           key={i}
           className={`w-[3px] rounded-full transition-all duration-150 ${
-            active ? 'bg-red-400 animate-pulse' : 'bg-rigel-muted'
+            active ? 'bg-red-500/70 animate-pulse' : 'bg-rigel-muted'
           }`}
           style={{
             height: active ? `${8 + Math.sin(i * 1.2) * 8}px` : '4px',
@@ -41,9 +41,9 @@ export function VoiceBar({
       : 'Tap mic to speak';
 
   const statusColor = isSpeaking
-    ? 'text-purple-400'
+    ? 'text-purple-400/80'
     : isListening
-      ? 'text-red-400'
+      ? 'text-red-400/80'
       : 'text-rigel-muted';
 
   return (
@@ -53,10 +53,10 @@ export function VoiceBar({
         <div
           className={`w-2.5 h-2.5 rounded-full ${
             isSpeaking
-              ? 'bg-purple-500 animate-pulse'
+              ? 'bg-purple-500/70 animate-pulse'
               : isListening
-                ? 'bg-red-500 animate-pulse'
-                : 'bg-gray-500'
+                ? 'bg-red-500/70 animate-pulse'
+                : 'bg-gray-600'
           }`}
         />
         <span className={`text-xs font-medium ${statusColor}`}>
@@ -78,7 +78,7 @@ export function VoiceBar({
       <button
         type="button"
         onClick={onStop}
-        className="flex-shrink-0 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/30 transition-colors"
+        className="flex-shrink-0 px-3 py-1.5 bg-red-900/30 text-red-400/80 rounded-lg text-xs font-medium hover:bg-red-900/40 transition-colors"
       >
         &#9632; Stop
       </button>

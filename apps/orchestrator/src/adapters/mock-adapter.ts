@@ -1,6 +1,6 @@
 import type { AgentEvent } from '@rigelhq/shared';
 import { generateRunId, generateEventId } from '@rigelhq/shared';
-import type { GatewayAdapter, AgentHandle, AgentEventCallback, SpawnOptions } from './adapter.js';
+import type { GatewayAdapter, AgentHandle, AgentEventCallback, SpawnOptions, SessionInfo } from './adapter.js';
 
 interface MockAgent {
   handle: AgentHandle;
@@ -36,6 +36,7 @@ export class MockAdapter implements GatewayAdapter {
         id: `mock-${configId}-${Date.now()}`,
         configId,
         pid: null,
+        sessionId: `mock-session-${Date.now()}`,
         stop: async () => this.stopAgent(configId),
       },
       timers: [],
@@ -113,6 +114,39 @@ export class MockAdapter implements GatewayAdapter {
     this.emitEvent(configId, 'lifecycle', { phase: 'end' });
     agent.stopped = true;
     this.agents.delete(configId);
+  }
+
+  async sendMessage(
+    handle: AgentHandle,
+    _message: string,
+    onEvent: AgentEventCallback,
+  ): Promise<void> {
+    const agent = this.agents.get(handle.configId);
+    if (agent) {
+      agent.callback = onEvent;
+      agent.stopped = false;
+      this.emitSequence(handle.configId);
+    }
+  }
+
+  async interrupt(_configId: string): Promise<void> {
+    // Mock: no-op
+  }
+
+  async sendToSession(
+    _sessionId: string,
+    _message: string,
+    _onEvent: AgentEventCallback,
+  ): Promise<void> {
+    // Mock: no-op
+  }
+
+  async listSessions(): Promise<SessionInfo[]> {
+    return [...this.agents.entries()].map(([configId, agent]) => ({
+      sessionId: agent.handle.sessionId ?? `mock-${configId}`,
+      summary: `Mock session for ${configId}`,
+      lastModified: Date.now(),
+    }));
   }
 
   async stop(handle: AgentHandle): Promise<void> {

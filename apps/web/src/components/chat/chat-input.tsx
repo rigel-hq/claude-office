@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import type { AgentRoleMeta } from '@rigelhq/shared';
 
 interface ChatInputProps {
@@ -12,6 +12,18 @@ interface ChatInputProps {
 
 export function ChatInput({ onSend, agents, selectedAgent, onSelectAgent }: ChatInputProps) {
   const [value, setValue] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const resetHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+  }, []);
+
+  useEffect(() => {
+    resetHeight();
+  }, [value, resetHeight]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -22,6 +34,16 @@ export function ChatInput({ onSend, agents, selectedAgent, onSelectAgent }: Chat
       setValue('');
     },
     [value, onSend],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit(e);
+      }
+    },
+    [handleSubmit],
   );
 
   const selectedMeta = agents.find((a) => a.id === selectedAgent);
@@ -51,12 +73,15 @@ export function ChatInput({ onSend, agents, selectedAgent, onSelectAgent }: Chat
 
       {/* Message input */}
       <form onSubmit={handleSubmit} className="flex gap-2 px-3 pb-3 pt-1">
-        <input
-          type="text"
+        <textarea
+          ref={textareaRef}
           value={value}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setValue(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className="flex-1 bg-rigel-bg border border-rigel-border rounded-lg px-3 py-2 text-sm text-rigel-text placeholder-rigel-muted focus:outline-none focus:border-rigel-blue"
+          rows={1}
+          className="flex-1 bg-rigel-bg border border-rigel-border rounded-lg px-3 py-2 text-sm text-rigel-text placeholder-rigel-muted focus:outline-none focus:border-rigel-blue resize-none overflow-y-auto"
+          style={{ maxHeight: 150 }}
         />
         <button
           type="submit"

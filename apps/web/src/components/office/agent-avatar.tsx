@@ -8,13 +8,13 @@ import type { AgentState } from '@/store/agent-store';
 const R = 26; // avatar radius
 
 const STATUS_COLORS: Record<string, string> = {
-  OFFLINE: '#6b7280',
-  IDLE: '#22c55e',
-  THINKING: '#3b82f6',
-  TOOL_CALLING: '#f97316',
-  SPEAKING: '#a855f7',
-  COLLABORATING: '#06b6d4',
-  ERROR: '#ef4444',
+  OFFLINE: '#555d68',
+  IDLE: '#3a9050',
+  THINKING: '#4a7ab0',
+  TOOL_CALLING: '#b07a40',
+  SPEAKING: '#8a6abf',
+  COLLABORATING: '#3a90a0',
+  ERROR: '#b84a42',
 };
 
 // Movement offsets: working agents slide forward from desk
@@ -77,38 +77,41 @@ function Eyes({ style, cx, cy, r }: { style: string; cx: number; cy: number; r: 
   const s = r / 20;
   const ey = cy + r * 0.05;
   const gap = 5 * s;
+  const eyeColor = 'var(--office-eye)';
+  const eyeWhite = 'var(--office-eye-white)';
+  const eyeHighlight = 'var(--office-eye-highlight)';
 
   switch (style) {
     case 'dot':
       return (
         <g>
-          <circle cx={cx - gap} cy={ey} r={1.8 * s} fill="#1a1a2e" />
-          <circle cx={cx + gap} cy={ey} r={1.8 * s} fill="#1a1a2e" />
+          <circle cx={cx - gap} cy={ey} r={1.8 * s} style={{ fill: eyeColor }} />
+          <circle cx={cx + gap} cy={ey} r={1.8 * s} style={{ fill: eyeColor }} />
         </g>
       );
     case 'line':
       return (
         <g>
-          <line x1={cx - gap - 2 * s} y1={ey} x2={cx - gap + 2 * s} y2={ey} stroke="#1a1a2e" strokeWidth={1.5} strokeLinecap="round" />
-          <line x1={cx + gap - 2 * s} y1={ey} x2={cx + gap + 2 * s} y2={ey} stroke="#1a1a2e" strokeWidth={1.5} strokeLinecap="round" />
+          <line x1={cx - gap - 2 * s} y1={ey} x2={cx - gap + 2 * s} y2={ey} style={{ stroke: eyeColor }} strokeWidth={1.5} strokeLinecap="round" />
+          <line x1={cx + gap - 2 * s} y1={ey} x2={cx + gap + 2 * s} y2={ey} style={{ stroke: eyeColor }} strokeWidth={1.5} strokeLinecap="round" />
         </g>
       );
     case 'wide':
       return (
         <g>
-          <ellipse cx={cx - gap} cy={ey} rx={3 * s} ry={2.5 * s} fill="#fff" />
-          <ellipse cx={cx + gap} cy={ey} rx={3 * s} ry={2.5 * s} fill="#fff" />
-          <circle cx={cx - gap} cy={ey} r={1.5 * s} fill="#1a1a2e" />
-          <circle cx={cx + gap} cy={ey} r={1.5 * s} fill="#1a1a2e" />
-          <circle cx={cx - gap + 0.5 * s} cy={ey - 0.5 * s} r={0.6 * s} fill="#fff" />
-          <circle cx={cx + gap + 0.5 * s} cy={ey - 0.5 * s} r={0.6 * s} fill="#fff" />
+          <ellipse cx={cx - gap} cy={ey} rx={3 * s} ry={2.5 * s} style={{ fill: eyeWhite }} />
+          <ellipse cx={cx + gap} cy={ey} rx={3 * s} ry={2.5 * s} style={{ fill: eyeWhite }} />
+          <circle cx={cx - gap} cy={ey} r={1.5 * s} style={{ fill: eyeColor }} />
+          <circle cx={cx + gap} cy={ey} r={1.5 * s} style={{ fill: eyeColor }} />
+          <circle cx={cx - gap + 0.5 * s} cy={ey - 0.5 * s} r={0.6 * s} style={{ fill: eyeHighlight }} />
+          <circle cx={cx + gap + 0.5 * s} cy={ey - 0.5 * s} r={0.6 * s} style={{ fill: eyeHighlight }} />
         </g>
       );
     default:
       return (
         <g>
-          <circle cx={cx - gap} cy={ey} r={1.8 * s} fill="#1a1a2e" />
-          <circle cx={cx + gap} cy={ey} r={1.8 * s} fill="#1a1a2e" />
+          <circle cx={cx - gap} cy={ey} r={1.8 * s} style={{ fill: eyeColor }} />
+          <circle cx={cx + gap} cy={ey} r={1.8 * s} style={{ fill: eyeColor }} />
         </g>
       );
   }
@@ -128,7 +131,7 @@ function AvatarFace({ data, cx, cy, r }: { data: AvatarData; cx: number; cy: num
       <Eyes style={data.eyeStyle} cx={cx} cy={cy} r={r} />
       <path
         d={`M ${cx - 3 * s} ${cy + r * 0.28} Q ${cx} ${cy + r * 0.38} ${cx + 3 * s} ${cy + r * 0.28}`}
-        fill="none" stroke="#1a1a2e" strokeWidth={0.8} opacity={0.35}
+        fill="none" style={{ stroke: 'var(--office-mouth)' }} strokeWidth={0.8} opacity={0.35}
       />
     </g>
   );
@@ -350,7 +353,7 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
         )}
 
         {/* Avatar disc */}
-        <circle cx={0} cy={0} r={R} fill="#1e293b" />
+        <circle cx={0} cy={0} r={R} style={{ fill: 'var(--office-avatar-disc)' }} />
 
         {/* Clipped face */}
         <defs>
@@ -387,10 +390,10 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
               <rect
                 x={-(agent.currentTool.length * 3.8 + 12) / 2} y={0}
                 width={agent.currentTool.length * 3.8 + 12} height={15}
-                rx={7.5} fill="#f97316"
+                rx={7.5} style={{ fill: 'var(--office-tool-badge)' }}
               />
               <text x={0} y={8.5} textAnchor="middle" dominantBaseline="central"
-                fill="#fff" fontSize={8} fontWeight="600" fontFamily="system-ui">
+                style={{ fill: 'var(--office-tool-badge-text)' }} fontSize={8} fontWeight="600" fontFamily="system-ui">
                 {agent.currentTool}
               </text>
             </g>
@@ -401,12 +404,11 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
         <g transform={`translate(0, ${agent.currentTool ? 56 : 36})`}>
           <rect
             x={-58} y={0} width={116} height={20} rx={10}
-            fill="rgba(15, 23, 42, 0.9)"
-            stroke="rgba(51, 65, 85, 0.5)"
+            style={{ fill: 'var(--office-name-bg)', stroke: 'var(--office-name-stroke)' }}
             strokeWidth={0.6}
           />
           <text x={0} y={11} textAnchor="middle" dominantBaseline="central"
-            fill={isActive ? '#e2e8f0' : '#94a3b8'}
+            style={{ fill: isActive ? 'var(--office-name-active)' : 'var(--office-name-inactive)' }}
             fontSize={10} fontWeight={isWorking ? 600 : 500} fontFamily="system-ui"
             letterSpacing="0.01em">
             {agent.name.length > 20 ? agent.name.slice(0, 18) + '\u2026' : agent.name}
@@ -418,8 +420,8 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
           {agent.speechBubble && agent.status === 'SPEAKING' && (
             <g transform="translate(0, -46)">
               <rect x={-65} y={-11} width={130} height={20} rx={10}
-                fill="rgba(168, 85, 247, 0.92)" />
-              <polygon points="-4,9 4,9 0,16" fill="rgba(168, 85, 247, 0.92)" />
+                fill="rgba(110, 85, 160, 0.88)" />
+              <polygon points="-4,9 4,9 0,16" fill="rgba(110, 85, 160, 0.88)" />
               <text x={0} y={0} textAnchor="middle" dominantBaseline="central"
                 fill="#fff" fontSize={8.5} fontFamily="system-ui">
                 {agent.speechBubble.length > 28 ? agent.speechBubble.slice(0, 26) + '\u2026' : agent.speechBubble}
@@ -446,7 +448,7 @@ export function SidebarAvatar({ agentId, size = 28 }: { agentId: string; size?: 
           <circle cx={r} cy={r} r={r} />
         </clipPath>
       </defs>
-      <circle cx={r} cy={r} r={r} fill="#1e293b" />
+      <circle cx={r} cy={r} r={r} style={{ fill: 'var(--office-sidebar-disc)' }} />
       <g clipPath={`url(#${clipId})`}>
         <AvatarFace data={data} cx={r} cy={r} r={r} />
       </g>

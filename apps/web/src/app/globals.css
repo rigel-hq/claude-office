@@ -1,15 +1,143 @@
 @import 'tailwindcss';
 
+/* ── Theme variables (light/dark) ──────────────────────────── */
+
+:root {
+  --rigel-bg: #f0f2f5;
+  --rigel-surface: #ffffff;
+  --rigel-border: #d8dce3;
+  --rigel-text: #1f2328;
+  --rigel-muted: #656d76;
+  --rigel-blue: #2563eb;
+  --rigel-green: #16a34a;
+  --rigel-orange: #c2610c;
+  --rigel-purple: #7c3aed;
+  --rigel-cyan: #0891b2;
+  --rigel-red: #dc2626;
+
+  /* Office floor */
+  --office-bg: #f0f2f5;
+  --office-floor: #e8eaed;
+  --office-floor-line: #d0d4db;
+  --office-corridor: #dde1e8;
+  --office-corridor-sub: #d4d8df;
+  --office-wall: #94a3b8;
+  --office-wall-inner: #b0b8c4;
+  --office-desk: #c8cdd4;
+  --office-monitor: #b0b8c4;
+  --office-screen: #b8cce0;
+  --office-keyboard: #c8cdd4;
+  --office-chair: #d0d4db;
+  --office-chair-back: #c8ccd2;
+  --office-furniture-stroke: #94a3b8;
+  --office-sofa-back: #c8ccd4;
+  --office-sofa-seat: #d0d4dc;
+  --office-sofa-stroke: #b0b4bc;
+  --office-pot: #c0b8b0;
+  --office-pot-stroke: #a89888;
+  --office-soil: #b0a898;
+  --office-leaf1: #90c8a0;
+  --office-leaf2: #80b890;
+  --office-leaf3: #a0d0b0;
+  --office-cooler-base: #c0c8d0;
+  --office-cooler-base-stroke: #a8b0b8;
+  --office-cooler-tank: #90b8d0;
+  --office-cooler-tank-stroke: #80a8c0;
+  --office-cooler-water: #a0c8e0;
+  --office-zone-exec: #e8e0f0;
+  --office-zone-eng: #dfe8f0;
+  --office-zone-qa: #dff0e8;
+  --office-zone-ops: #f0e8df;
+  --office-corridor-dash: #b0b8c4;
+  --office-avatar-disc: #d8dce3;
+  --office-name-bg: rgba(240, 242, 245, 0.9);
+  --office-name-stroke: rgba(148, 163, 184, 0.5);
+  --office-name-active: #334155;
+  --office-name-inactive: #64748b;
+  --office-table-center: #d4d8df;
+  --office-eye: #1a1a2e;
+  --office-eye-white: #ffffff;
+  --office-eye-highlight: #ffffff;
+  --office-mouth: #1a1a2e;
+  --office-sidebar-disc: #d8dce3;
+  --office-tool-badge: #8a7a5a;
+  --office-tool-badge-text: #ffffff;
+  --office-zone-label: #64748b;
+}
+
+.dark {
+  --rigel-bg: #0d1117;
+  --rigel-surface: #141920;
+  --rigel-border: #252b33;
+  --rigel-text: #b8c0cc;
+  --rigel-muted: #6e7681;
+  --rigel-blue: #4d94db;
+  --rigel-green: #37a34a;
+  --rigel-orange: #cc7a3a;
+  --rigel-purple: #b196d4;
+  --rigel-cyan: #4bb8c0;
+  --rigel-red: #d4493f;
+
+  /* Office floor */
+  --office-bg: #0a0e14;
+  --office-floor: #0d1117;
+  --office-floor-line: #161b22;
+  --office-corridor: #0f172a;
+  --office-corridor-sub: #111827;
+  --office-wall: #334155;
+  --office-wall-inner: #1e293b;
+  --office-desk: #1e293b;
+  --office-monitor: #0f172a;
+  --office-screen: #1e3a5f;
+  --office-keyboard: #1e293b;
+  --office-chair: #1a1a2e;
+  --office-chair-back: #1e1e38;
+  --office-furniture-stroke: #334155;
+  --office-sofa-back: #252530;
+  --office-sofa-seat: #2a2a38;
+  --office-sofa-stroke: #33333f;
+  --office-pot: #3a3530;
+  --office-pot-stroke: #2e2a26;
+  --office-soil: #2a2420;
+  --office-leaf1: #1a3a28;
+  --office-leaf2: #1e4030;
+  --office-leaf3: #224a35;
+  --office-cooler-base: #2a303a;
+  --office-cooler-base-stroke: #363d48;
+  --office-cooler-tank: #5a7a90;
+  --office-cooler-tank-stroke: #4a6a80;
+  --office-cooler-water: #3a6080;
+  --office-zone-exec: #151020;
+  --office-zone-eng: #0e1520;
+  --office-zone-qa: #0e1816;
+  --office-zone-ops: #18150e;
+  --office-corridor-dash: #1e293b;
+  --office-avatar-disc: #1a2230;
+  --office-name-bg: rgba(15, 23, 42, 0.9);
+  --office-name-stroke: rgba(51, 65, 85, 0.5);
+  --office-name-active: #e2e8f0;
+  --office-name-inactive: #94a3b8;
+  --office-table-center: #0f172a;
+  --office-eye: #e2e8f0;
+  --office-eye-white: #334155;
+  --office-eye-highlight: #e2e8f0;
+  --office-mouth: #e2e8f0;
+  --office-sidebar-disc: #1a2230;
+  --office-tool-badge: #8a6a3a;
+  --office-tool-badge-text: #ffffff;
+  --office-zone-label: #8b949e;
+}
+
 @theme {
-  --color-rigel-bg: #0f1419;
-  --color-rigel-surface: #161b22;
-  --color-rigel-border: #30363d;
-  --color-rigel-text: #c9d1d9;
-  --color-rigel-muted: #8b949e;
-  --color-rigel-blue: #58a6ff;
-  --color-rigel-green: #3fb950;
-  --color-rigel-orange: #f0883e;
-  --color-rigel-purple: #d2a8ff;
-  --color-rigel-cyan: #56d4dd;
-  --color-rigel-red: #f85149;
+  --color-rigel-bg: var(--rigel-bg);
+  --color-rigel-surface: var(--rigel-surface);
+  --color-rigel-border: var(--rigel-border);
+  --color-rigel-text: var(--rigel-text);
+  --color-rigel-muted: var(--rigel-muted);
+  --color-rigel-blue: var(--rigel-blue);
+  --color-rigel-green: var(--rigel-green);
+  --color-rigel-orange: var(--rigel-orange);
+  --color-rigel-purple: var(--rigel-purple);
+  --color-rigel-cyan: var(--rigel-cyan);
+  --color-rigel-red: var(--rigel-red);
 }

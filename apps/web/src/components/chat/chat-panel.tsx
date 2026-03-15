@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from 'react';
 import { useAgentStore } from '@/store/agent-store';
 import { AGENT_ROLES } from '@rigelhq/shared';
 import { ChatInput } from './chat-input';
+import { MarkdownMessage } from './markdown-message';
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -55,7 +56,7 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
                     : 'bg-rigel-bg text-rigel-text border border-rigel-border'
               }`}
             >
-              {msg.content}
+              {msg.sender === 'user' ? msg.content : <MarkdownMessage content={msg.content} />}
             </div>
             <span className="text-[10px] text-rigel-muted">{formatTime(msg.timestamp)}</span>
           </div>

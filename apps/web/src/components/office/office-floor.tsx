@@ -3,6 +3,9 @@
 import { useAgentStore } from '@/store/agent-store';
 import { AgentAvatar } from './agent-avatar';
 
+// Helper: shorthand for var()
+const v = (name: string) => `var(--office-${name})`;
+
 // ── Furniture sub-components ──────────────────────────────────
 
 function DeskUnit({ x, y }: { x: number; y: number }) {
@@ -10,22 +13,22 @@ function DeskUnit({ x, y }: { x: number; y: number }) {
     <g>
       {/* Desk surface */}
       <rect x={x - 44} y={y - 58} width={88} height={34} rx={3}
-        fill="#1e293b" stroke="#334155" strokeWidth={0.5} />
+        style={{ fill: v('desk'), stroke: v('furniture-stroke') }} strokeWidth={0.5} />
       {/* Monitor */}
       <rect x={x - 13} y={y - 54} width={26} height={18} rx={2}
-        fill="#0f172a" stroke="#475569" strokeWidth={0.4} />
+        style={{ fill: v('monitor'), stroke: v('furniture-stroke') }} strokeWidth={0.4} />
       {/* Screen glow */}
       <rect x={x - 11} y={y - 52} width={22} height={14} rx={1.5}
-        fill="#1e3a5f" opacity={0.4} />
+        style={{ fill: v('screen') }} opacity={0.4} />
       {/* Keyboard */}
       <rect x={x - 10} y={y - 32} width={20} height={6} rx={1}
-        fill="#1e293b" stroke="#334155" strokeWidth={0.3} />
+        style={{ fill: v('keyboard'), stroke: v('furniture-stroke') }} strokeWidth={0.3} />
       {/* Chair */}
       <ellipse cx={x} cy={y + 44} rx={16} ry={12}
-        fill="#1a1a2e" stroke="#334155" strokeWidth={0.4} />
+        style={{ fill: v('chair'), stroke: v('furniture-stroke') }} strokeWidth={0.4} />
       {/* Chair back */}
       <rect x={x - 12} y={y + 32} width={24} height={7} rx={3.5}
-        fill="#1e1e38" stroke="#334155" strokeWidth={0.3} />
+        style={{ fill: v('chair-back'), stroke: v('furniture-stroke') }} strokeWidth={0.3} />
     </g>
   );
 }
@@ -34,9 +37,9 @@ function MeetingTable({ x, y }: { x: number; y: number }) {
   return (
     <g>
       {/* Circular table */}
-      <circle cx={x} cy={y} r={28} fill="#1e293b" stroke="#334155" strokeWidth={0.5} />
+      <circle cx={x} cy={y} r={28} style={{ fill: v('desk'), stroke: v('furniture-stroke') }} strokeWidth={0.5} />
       {/* Table center marker */}
-      <circle cx={x} cy={y} r={4} fill="#0f172a" opacity={0.3} />
+      <circle cx={x} cy={y} r={4} style={{ fill: v('table-center') }} opacity={0.3} />
       {/* Chairs around table */}
       {[0, 60, 120, 180, 240, 300].map((angle) => {
         const rad = (angle * Math.PI) / 180;
@@ -44,7 +47,7 @@ function MeetingTable({ x, y }: { x: number; y: number }) {
         const cy = y + Math.sin(rad) * 40;
         return (
           <ellipse key={angle} cx={cx} cy={cy} rx={8} ry={6}
-            fill="#1a1a2e" stroke="#334155" strokeWidth={0.3}
+            style={{ fill: v('chair'), stroke: v('furniture-stroke') }} strokeWidth={0.3}
             transform={`rotate(${angle}, ${cx}, ${cy})`} />
         );
       })}
@@ -58,17 +61,17 @@ function Sofa({ x, y, flip }: { x: number; y: number; flip?: boolean }) {
     <g transform={`translate(${x}, ${y}) scale(${s}, 1)`}>
       {/* Back rest */}
       <rect x={-22} y={-12} width={44} height={8} rx={4}
-        fill="#2d1b4e" stroke="#4a2d7a" strokeWidth={0.4} />
+        style={{ fill: v('sofa-back'), stroke: v('sofa-stroke') }} strokeWidth={0.4} />
       {/* Seat cushions */}
       <rect x={-20} y={-4} width={18} height={14} rx={3}
-        fill="#3b2069" stroke="#4a2d7a" strokeWidth={0.3} />
+        style={{ fill: v('sofa-seat'), stroke: v('sofa-stroke') }} strokeWidth={0.3} />
       <rect x={2} y={-4} width={18} height={14} rx={3}
-        fill="#3b2069" stroke="#4a2d7a" strokeWidth={0.3} />
+        style={{ fill: v('sofa-seat'), stroke: v('sofa-stroke') }} strokeWidth={0.3} />
       {/* Arm rests */}
       <rect x={-26} y={-8} width={6} height={20} rx={3}
-        fill="#2d1b4e" stroke="#4a2d7a" strokeWidth={0.3} />
+        style={{ fill: v('sofa-back'), stroke: v('sofa-stroke') }} strokeWidth={0.3} />
       <rect x={20} y={-8} width={6} height={20} rx={3}
-        fill="#2d1b4e" stroke="#4a2d7a" strokeWidth={0.3} />
+        style={{ fill: v('sofa-back'), stroke: v('sofa-stroke') }} strokeWidth={0.3} />
     </g>
   );
 }
@@ -79,17 +82,17 @@ function Plant({ x, y, size = 1 }: { x: number; y: number; size?: number }) {
     <g transform={`translate(${x}, ${y})`}>
       {/* Pot */}
       <rect x={-6 * s} y={2 * s} width={12 * s} height={10 * s} rx={2}
-        fill="#92400e" stroke="#78350f" strokeWidth={0.4} />
+        style={{ fill: v('pot'), stroke: v('pot-stroke') }} strokeWidth={0.4} />
       {/* Soil */}
       <ellipse cx={0} cy={2 * s} rx={6 * s} ry={2 * s}
-        fill="#451a03" />
+        style={{ fill: v('soil') }} />
       {/* Leaves */}
       <ellipse cx={-4 * s} cy={-6 * s} rx={6 * s} ry={8 * s}
-        fill="#166534" opacity={0.8} transform={`rotate(-15, ${-4 * s}, ${-6 * s})`} />
+        style={{ fill: v('leaf1') }} opacity={0.7} transform={`rotate(-15, ${-4 * s}, ${-6 * s})`} />
       <ellipse cx={4 * s} cy={-7 * s} rx={5 * s} ry={9 * s}
-        fill="#15803d" opacity={0.75} transform={`rotate(12, ${4 * s}, ${-7 * s})`} />
+        style={{ fill: v('leaf2') }} opacity={0.65} transform={`rotate(12, ${4 * s}, ${-7 * s})`} />
       <ellipse cx={0} cy={-10 * s} rx={4 * s} ry={7 * s}
-        fill="#16a34a" opacity={0.65} />
+        style={{ fill: v('leaf3') }} opacity={0.55} />
     </g>
   );
 }
@@ -99,13 +102,13 @@ function WaterCooler({ x, y }: { x: number; y: number }) {
     <g transform={`translate(${x}, ${y})`}>
       {/* Base */}
       <rect x={-8} y={4} width={16} height={14} rx={2}
-        fill="#334155" stroke="#475569" strokeWidth={0.4} />
+        style={{ fill: v('cooler-base'), stroke: v('cooler-base-stroke') }} strokeWidth={0.4} />
       {/* Tank */}
       <rect x={-6} y={-12} width={12} height={16} rx={6}
-        fill="#93c5fd" opacity={0.3} stroke="#60a5fa" strokeWidth={0.4} />
+        style={{ fill: v('cooler-tank'), stroke: v('cooler-tank-stroke') }} opacity={0.2} strokeWidth={0.4} />
       {/* Water level */}
       <rect x={-5} y={-6} width={10} height={10} rx={5}
-        fill="#3b82f6" opacity={0.15} />
+        style={{ fill: v('cooler-water') }} opacity={0.12} />
     </g>
   );
 }
@@ -141,22 +144,22 @@ export function OfficeFloor() {
     <svg
       viewBox="0 0 1200 700"
       className="w-full h-full"
-      style={{ background: '#0a0e14' }}
+      style={{ background: v('bg') }}
     >
       <defs>
         {/* Subtle floor tile pattern */}
         <pattern id="floor-tile" width="40" height="40" patternUnits="userSpaceOnUse">
-          <rect width="40" height="40" fill="#0d1117" />
-          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#161b22" strokeWidth={0.3} />
+          <rect width="40" height="40" style={{ fill: v('floor') }} />
+          <path d="M 40 0 L 0 0 0 40" fill="none" style={{ stroke: v('floor-line') }} strokeWidth={0.3} />
         </pattern>
 
         {/* Corridor tile pattern */}
         <pattern id="corridor-tile" width="28" height="28" patternUnits="userSpaceOnUse">
-          <rect width="28" height="28" fill="#0f172a" />
-          <rect x={1} y={1} width={12} height={12} rx={1} fill="#111827" opacity={0.5} />
-          <rect x={15} y={1} width={12} height={12} rx={1} fill="#111827" opacity={0.5} />
-          <rect x={1} y={15} width={12} height={12} rx={1} fill="#111827" opacity={0.5} />
-          <rect x={15} y={15} width={12} height={12} rx={1} fill="#111827" opacity={0.5} />
+          <rect width="28" height="28" style={{ fill: v('corridor') }} />
+          <rect x={1} y={1} width={12} height={12} rx={1} style={{ fill: v('corridor-sub') }} opacity={0.5} />
+          <rect x={15} y={1} width={12} height={12} rx={1} style={{ fill: v('corridor-sub') }} opacity={0.5} />
+          <rect x={1} y={15} width={12} height={12} rx={1} style={{ fill: v('corridor-sub') }} opacity={0.5} />
+          <rect x={15} y={15} width={12} height={12} rx={1} style={{ fill: v('corridor-sub') }} opacity={0.5} />
         </pattern>
 
         {/* Glow filter for active elements */}
@@ -174,34 +177,34 @@ export function OfficeFloor() {
 
       {/* ─── Layer 2: Building shell (outer walls) ─── */}
       <rect x={8} y={8} width={1184} height={684} rx={6}
-        fill="none" stroke="#334155" strokeWidth={2} />
+        fill="none" style={{ stroke: v('wall') }} strokeWidth={2} />
       {/* Inner wall shadow */}
       <rect x={10} y={10} width={1180} height={680} rx={5}
-        fill="none" stroke="#1e293b" strokeWidth={1} />
+        fill="none" style={{ stroke: v('wall-inner') }} strokeWidth={1} />
 
       {/* ─── Layer 3: Zone backgrounds ─── */}
       {/* Executive Wing (top-left) */}
       <rect x={14} y={14} width={CX - 14} height={CY - 14} rx={4}
-        fill="#1a1028" opacity={0.35} />
+        style={{ fill: v('zone-exec') }} opacity={0.25} />
       {/* Engineering Floor (top-right) */}
       <rect x={CX + CW} y={14} width={1186 - CX - CW} height={CY - 14} rx={4}
-        fill="#0f1a2e" opacity={0.35} />
+        style={{ fill: v('zone-eng') }} opacity={0.25} />
       {/* Quality Lab (bottom-left) */}
       <rect x={14} y={CY + CW} width={CX - 14} height={686 - CY - CW} rx={4}
-        fill="#0f1e1a" opacity={0.35} />
+        style={{ fill: v('zone-qa') }} opacity={0.25} />
       {/* Ops Center (bottom-right) */}
       <rect x={CX + CW} y={CY + CW} width={1186 - CX - CW} height={686 - CY - CW} rx={4}
-        fill="#1e1a0f" opacity={0.35} />
+        style={{ fill: v('zone-ops') }} opacity={0.25} />
 
       {/* Zone accent bars (top edge) */}
-      <rect x={14} y={14} width={CX - 14} height={2.5} rx={1}
-        fill="#a855f7" opacity={0.4} />
-      <rect x={CX + CW} y={14} width={1186 - CX - CW} height={2.5} rx={1}
-        fill="#3b82f6" opacity={0.4} />
-      <rect x={14} y={CY + CW} width={CX - 14} height={2.5} rx={1}
-        fill="#22c55e" opacity={0.4} />
-      <rect x={CX + CW} y={CY + CW} width={1186 - CX - CW} height={2.5} rx={1}
-        fill="#f97316" opacity={0.4} />
+      <rect x={14} y={14} width={CX - 14} height={2} rx={1}
+        fill="#8a6abf" opacity={0.3} />
+      <rect x={CX + CW} y={14} width={1186 - CX - CW} height={2} rx={1}
+        fill="#4a7ab0" opacity={0.3} />
+      <rect x={14} y={CY + CW} width={CX - 14} height={2} rx={1}
+        fill="#3a8a55" opacity={0.3} />
+      <rect x={CX + CW} y={CY + CW} width={1186 - CX - CW} height={2} rx={1}
+        fill="#b07a40" opacity={0.3} />
 
       {/* ─── Layer 4: Cross corridor ─── */}
       {/* Horizontal corridor */}
@@ -210,15 +213,15 @@ export function OfficeFloor() {
       <rect x={CX} y={14} width={CW} height={672} fill="url(#corridor-tile)" />
       {/* Corridor center lines */}
       <line x1={14} y1={CY + CW / 2} x2={1186} y2={CY + CW / 2}
-        stroke="#1e293b" strokeWidth={1} strokeDasharray="8 4" opacity={0.4} />
+        style={{ stroke: v('corridor-dash') }} strokeWidth={1} strokeDasharray="8 4" opacity={0.4} />
       <line x1={CX + CW / 2} y1={14} x2={CX + CW / 2} y2={686}
-        stroke="#1e293b" strokeWidth={1} strokeDasharray="8 4" opacity={0.4} />
+        style={{ stroke: v('corridor-dash') }} strokeWidth={1} strokeDasharray="8 4" opacity={0.4} />
 
       {/* ─── Layer 5: Zone labels ─── */}
-      <ZoneLabel x={28} y={38} label="Executive Wing" color="#a855f7" />
-      <ZoneLabel x={CX + CW + 14} y={38} label="Engineering Floor" color="#3b82f6" />
-      <ZoneLabel x={28} y={CY + CW + 24} label="Quality Lab" color="#22c55e" />
-      <ZoneLabel x={CX + CW + 14} y={CY + CW + 24} label="Ops Center" color="#f97316" />
+      <ZoneLabel x={28} y={38} label="Executive Wing" color="#8a6abf" />
+      <ZoneLabel x={CX + CW + 14} y={38} label="Engineering Floor" color="#4a7ab0" />
+      <ZoneLabel x={28} y={CY + CW + 24} label="Quality Lab" color="#3a8a55" />
+      <ZoneLabel x={CX + CW + 14} y={CY + CW + 24} label="Ops Center" color="#b07a40" />
 
       {/* ─── Layer 6: Furniture ─── */}
       {/* Desks at each agent position */}
@@ -238,10 +241,10 @@ export function OfficeFloor() {
       <Plant x={CX - 20} y={CY - 20} size={1.2} />
       <Plant x={CX + CW + 20} y={CY - 20} size={1} />
       <Plant x={CX - 20} y={CY + CW + 20} size={1} />
-      <Plant x={CX + CW + 20} y={CY + CW + 20} size={1.2} />
+      <Plant x={CX + CW + 20} y={CY + CW + 50} size={1.2} />
 
       {/* Corner plants */}
-      <Plant x={30} y={50} size={0.8} />
+      <Plant x={30} y={80} size={0.8} />
       <Plant x={1170} y={50} size={0.8} />
       <Plant x={30} y={660} size={0.8} />
       <Plant x={1170} y={660} size={0.8} />

@@ -117,6 +117,8 @@ export function useVoice({
     if (analyser) {
       const dataArray = new Uint8Array(analyser.fftSize);
       let speaking = false;
+      const startTime = Date.now();
+      const GRACE_PERIOD_MS = 8000; // ignore silence for first 8s so user has time to start
 
       const checkVolume = () => {
         if (!isListeningRef.current) return;
@@ -131,6 +133,7 @@ export function useVoice({
         }
         const rms = Math.sqrt(sum / dataArray.length);
         const isSpeakingNow = rms > 0.02; // threshold
+        const elapsed = Date.now() - startTime;
 
         if (isSpeakingNow) {
           speaking = true;
@@ -138,8 +141,8 @@ export function useVoice({
             clearTimeout(silenceTimerRef.current);
             silenceTimerRef.current = null;
           }
-        } else if (speaking && !silenceTimerRef.current) {
-          // Silence after speech — start timer
+        } else if (speaking && elapsed > GRACE_PERIOD_MS && !silenceTimerRef.current) {
+          // Silence after speech (and past grace period) — start timer
           silenceTimerRef.current = setTimeout(() => {
             speaking = false;
             silenceTimerRef.current = null;

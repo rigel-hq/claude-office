@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import type { AgentEvent, AgentStatus } from '@rigelhq/shared';
 import { AGENT_ROLE_MAP } from '@rigelhq/shared';
-import type { GatewayAdapter, AgentHandle, SpawnOptions } from '../adapters/adapter.js';
+import type { GatewayAdapter, AgentHandle, SpawnOptions, SessionInfo } from '../adapters/adapter.js';
 import type { EventBus } from './event-bus.js';
 
 interface ActiveAgent {
@@ -22,9 +22,11 @@ export class AgentManager {
     reject: (err: Error) => void;
   }> = [];
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Agents currently being steered — suppress completion side-effects */
+  private steering = new Set<string>();
 
   constructor(
-    private adapter: GatewayAdapter,
+    readonly adapter: GatewayAdapter,
     private eventBus: EventBus,
     private db: PrismaClient,
     private maxConcurrent: number = 5,
@@ -111,28 +113,140 @@ export class AgentManager {
     return handle;
   }
 
+  /** Send a follow-up message to an existing agent session.
+   *  If the agent is currently busy, interrupts the current work
+   *  and steers it with the new message (same session). */
+  async sendMessage(configId: string, message: string): Promise<void> {
+    const agent = this.active.get(configId);
+    if (!agent || !agent.handle.sessionId) {
+      throw new Error(`No active session for ${configId}`);
+    }
+
+    // Mark as steering so the interrupt's lifecycle:end doesn't trigger completion
+    this.steering.add(configId);
+
+    const onEvent = async (event: AgentEvent) => {
+      await this.handleEvent(configId, event);
+    };
+
+    agent.status = 'THINKING';
+    agent.lastActivity = Date.now();
+    await this.db.agent.update({
+      where: { configId },
+      data: { status: 'THINKING' },
+    });
+    await this.eventBus.publishStatus(configId, 'THINKING');
+
+    // adapter.sendMessage now internally interrupts any in-progress query first
+    this.steering.delete(configId);
+    await this.adapter.sendMessage(agent.handle, message, onEvent);
+  }
+
+  /** List all Claude sessions on this machine (managed + external) */
+  async listAllSessions(): Promise<{ managed: Array<{ configId: string; sessionId: string; status: AgentStatus }>; external: SessionInfo[] }> {
+    // Managed sessions from our active agents
+    const managed: Array<{ configId: string; sessionId: string; status: AgentStatus }> = [];
+    for (const [configId, agent] of this.active) {
+      if (agent.handle.sessionId) {
+        managed.push({ configId, sessionId: agent.handle.sessionId, status: agent.status });
+      }
+    }
+
+    // All sessions on this machine via SDK
+    const allSessions = await this.adapter.listSessions();
+
+    // Filter out our managed sessions to get external ones
+    const managedIds = new Set(managed.map(m => m.sessionId));
+    const external = allSessions.filter(s => !managedIds.has(s.sessionId));
+
+    return { managed, external };
+  }
+
+  /** Send a message to any Claude session by ID (managed or external) */
+  async sendToSession(sessionId: string, message: string): Promise<void> {
+    const onEvent = async (event: AgentEvent) => {
+      await this.eventBus.publish(event);
+    };
+    await this.adapter.sendToSession(sessionId, message, onEvent);
+  }
+
+  /** Check if an agent has an active session that can be resumed */
+  hasActiveSession(configId: string): boolean {
+    const agent = this.active.get(configId);
+    return Boolean(agent?.handle.sessionId);
+  }
+
+  /** Re-register an agent that was removed from the active map but still has a valid session */
+  ensureActive(configId: string, handle: AgentHandle): void {
+    if (this.active.has(configId)) return;
+    if (!handle.sessionId) return;
+    console.log(`[AgentMgr] Re-registering ${configId} with session ${handle.sessionId.slice(0, 8)}...`);
+    this.active.set(configId, {
+      handle,
+      configId,
+      status: 'IDLE',
+      lastActivity: Date.now(),
+    });
+  }
+
+  /** Get the handle for an active agent */
+  getHandle(configId: string): AgentHandle | null {
+    return this.active.get(configId)?.handle ?? null;
+  }
+
   private async handleEvent(configId: string, event: AgentEvent): Promise<void> {
     const agent = this.active.get(configId);
     if (!agent) return;
 
     agent.lastActivity = Date.now();
 
-    // Map event to status
-    const newStatus = this.mapEventToStatus(event);
-    if (newStatus && newStatus !== agent.status) {
-      agent.status = newStatus;
-      await this.db.agent.update({
-        where: { configId },
-        data: { status: newStatus },
-      });
-      await this.eventBus.publishStatus(configId, newStatus);
+    // Check if this event is from a subagent (specialist) rather than the parent
+    const isSubagentEvent = event.agentId !== configId;
+
+    if (isSubagentEvent) {
+      // Upsert the specialist agent in DB so the UI can show it
+      const specialistId = event.agentId;
+      const specialistStatus = this.mapEventToStatus(event);
+      if (specialistStatus) {
+        const roleMeta = AGENT_ROLE_MAP.get(specialistId);
+        const name = roleMeta?.name ?? specialistId;
+        const role = roleMeta?.role ?? 'Specialist';
+        const icon = roleMeta?.icon ?? '🤖';
+        await this.db.agent.upsert({
+          where: { configId: specialistId },
+          update: { status: specialistStatus, startedAt: new Date() },
+          create: {
+            configId: specialistId,
+            name,
+            role,
+            icon,
+            status: specialistStatus,
+            startedAt: new Date(),
+            pid: null,
+          },
+        });
+        await this.eventBus.publishStatus(specialistId, specialistStatus);
+      }
+    } else {
+      // Map event to status for the parent agent
+      const newStatus = this.mapEventToStatus(event);
+      if (newStatus && newStatus !== agent.status) {
+        agent.status = newStatus;
+        await this.db.agent.update({
+          where: { configId },
+          data: { status: newStatus },
+        });
+        await this.eventBus.publishStatus(configId, newStatus);
+      }
     }
 
     // Publish event
     await this.eventBus.publish(event);
 
-    // Handle lifecycle end
-    if (event.stream === 'lifecycle' && event.data.phase === 'end') {
+    // Handle lifecycle end — mark IDLE but keep session alive
+    // Skip during steering (interrupt + immediate re-send)
+    // Only trigger for the parent agent's lifecycle end, not subagent lifecycle ends
+    if (!isSubagentEvent && event.stream === 'lifecycle' && event.data.phase === 'end' && !this.steering.has(configId)) {
       await this.onAgentComplete(configId);
     }
 
@@ -158,13 +272,26 @@ export class AgentManager {
   }
 
   private async onAgentComplete(configId: string): Promise<void> {
-    this.clearIdleTimer(configId);
-    this.active.delete(configId);
+    const agent = this.active.get(configId);
 
-    await this.db.agent.update({
-      where: { configId },
-      data: { status: 'IDLE', pid: null },
-    });
+    // Keep agent in active map if it has a session (can be resumed)
+    if (agent?.handle.sessionId) {
+      console.log(`[AgentMgr] ${configId} completed — keeping IDLE (session: ${agent.handle.sessionId.slice(0, 8)}...)`);
+      agent.status = 'IDLE';
+      await this.db.agent.update({
+        where: { configId },
+        data: { status: 'IDLE' },
+      });
+    } else {
+      // No session — clean up fully
+      console.log(`[AgentMgr] ${configId} completed — removing (no sessionId captured)`);
+      this.clearIdleTimer(configId);
+      this.active.delete(configId);
+      await this.db.agent.update({
+        where: { configId },
+        data: { status: 'IDLE', pid: null },
+      });
+    }
 
     // Process queue
     await this.processQueue();

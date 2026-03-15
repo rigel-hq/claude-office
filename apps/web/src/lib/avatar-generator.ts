@@ -22,11 +22,11 @@ export interface AvatarData {
   shirtColor: string;
 }
 
-const SKIN_COLORS = ['#fde2c8', '#f5c5a0', '#d4956b', '#a0714f', '#6b4226', '#ffe0bd'];
-const HAIR_COLORS = ['#2c1b0e', '#5a3214', '#c2884a', '#e8c068', '#8b4513', '#1a1a2e'];
+const SKIN_COLORS = ['#e8cdb5', '#d4b89a', '#bf9876', '#96775a', '#6b5240', '#dcc5a8'];
+const HAIR_COLORS = ['#2a1f16', '#4a3020', '#9a7850', '#bfa268', '#6e4020', '#1c1c28'];
 const SHIRT_COLORS = [
-  '#3b82f6', '#8b5cf6', '#ec4899', '#f97316', '#22c55e', '#06b6d4',
-  '#eab308', '#ef4444', '#6366f1', '#14b8a6', '#f43f5e', '#a855f7',
+  '#3a6b9f', '#6b5a8e', '#8e5a72', '#9a6e40', '#3a7a52', '#3a808a',
+  '#8a7a30', '#8a4a4a', '#5558a0', '#2a8a7a', '#7a4a58', '#7a5a9a',
 ];
 
 const FACE_SHAPES = ['round', 'square', 'oval'] as const;

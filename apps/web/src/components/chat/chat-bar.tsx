@@ -5,10 +5,10 @@ import { useAgentStore } from '@/store/agent-store';
 import { AGENT_ROLES } from '@rigelhq/shared';
 import { SidebarAvatar } from '../office/agent-avatar';
 import { voiceConfig } from '@/lib/voice-config';
-import { extractShortResponse } from '@/lib/voice-utils';
 import { useVoice } from '@/hooks/use-voice';
 import { useTts } from '@/hooks/use-tts';
 import { VoiceBar } from './voice-bar';
+import { MarkdownMessage } from './markdown-message';
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -16,15 +16,16 @@ function formatTime(timestamp: number): string {
 
 interface ChatBarProps {
   onSend: (message: string, targetAgent?: string) => void;
+  onSummarize: (text: string) => Promise<string>;
 }
 
-export function ChatBar({ onSend }: ChatBarProps) {
+export function ChatBar({ onSend, onSummarize }: ChatBarProps) {
   const messages = useAgentStore((s) => s.messages);
   const [value, setValue] = useState('');
   const [selectedAgent, setSelectedAgent] = useState('cea');
   const [panelOpen, setPanelOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Voice state ───────────────────────────────────────────
   const [isVoiceMode, setIsVoiceMode] = useState(false);
@@ -113,8 +114,10 @@ export function ChatBar({ onSend }: ChatBarProps) {
     if (messages.length > lastMsgCountRef.current) {
       const newMsg = messages[messages.length - 1];
       if (newMsg.sender === 'agent' && !tts.isSpeaking) {
-        const short = extractShortResponse(newMsg.content);
-        tts.speak(short);
+        // Summarize via CEA's summarizer subagent, then speak
+        onSummarize(newMsg.content).then((summary) => {
+          tts.speak(summary);
+        });
       }
     }
     lastMsgCountRef.current = messages.length;
@@ -136,6 +139,17 @@ export function ChatBar({ onSend }: ChatBarProps) {
     }
   }, [messages.length]);
 
+  const resetTextareaHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+  }, []);
+
+  useEffect(() => {
+    resetTextareaHeight();
+  }, [value, resetTextareaHeight]);
+
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
@@ -146,6 +160,16 @@ export function ChatBar({ onSend }: ChatBarProps) {
       setPanelOpen(true);
     },
     [value, selectedAgent, onSend],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit(e);
+      }
+    },
+    [handleSubmit],
   );
 
   const selectedMeta = AGENT_ROLES.find((a) => a.id === selectedAgent);
@@ -186,7 +210,7 @@ export function ChatBar({ onSend }: ChatBarProps) {
                   )}
                   <div className="max-w-[70%]">
                     {msg.sender === 'agent' && msg.agentName && (
-                      <span className="text-[10px] text-purple-400 font-medium block">{msg.agentName}</span>
+                      <span className="text-[10px] text-purple-400/70 font-medium block">{msg.agentName}</span>
                     )}
                     <div
                       className={`px-2.5 py-1.5 rounded-lg text-xs ${
@@ -197,7 +221,7 @@ export function ChatBar({ onSend }: ChatBarProps) {
                             : 'bg-rigel-bg text-rigel-text border border-rigel-border rounded-bl-sm'
                       }`}
                     >
-                      {msg.content}
+                      {msg.sender === 'user' ? msg.content : <MarkdownMessage content={msg.content} />}
                     </div>
                     <span className="text-[9px] text-rigel-muted mt-0.5 block">
                       {formatTime(msg.timestamp)}
@@ -212,7 +236,7 @@ export function ChatBar({ onSend }: ChatBarProps) {
 
       {/* Bottom command bar */}
       <div className="bg-rigel-surface border-t border-rigel-border px-4 py-2">
-        <form onSubmit={handleSubmit} className="flex items-center gap-2">
+        <form onSubmit={handleSubmit} className="flex items-end gap-2">
           {/* Agent selector — always visible */}
           <select
             value={selectedAgent}
@@ -259,14 +283,16 @@ export function ChatBar({ onSend }: ChatBarProps) {
           ) : (
             <>
               {/* Message input */}
-              <input
-                ref={inputRef}
-                type="text"
+              <textarea
+                ref={textareaRef}
                 value={value}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setValue(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setValue(e.target.value)}
+                onKeyDown={handleKeyDown}
                 onFocus={() => { if (messages.length > 0) setPanelOpen(true); }}
                 placeholder={placeholder}
-                className="flex-1 bg-rigel-bg border border-rigel-border rounded-lg px-3 py-2 text-sm text-rigel-text placeholder-rigel-muted focus:outline-none focus:border-rigel-blue"
+                rows={1}
+                className="flex-1 bg-rigel-bg border border-rigel-border rounded-lg px-3 py-2 text-sm text-rigel-text placeholder-rigel-muted focus:outline-none focus:border-rigel-blue resize-none overflow-y-auto"
+                style={{ maxHeight: 150 }}
               />
 
               {/* Toggle messages */}

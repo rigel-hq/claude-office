@@ -89,5 +89,32 @@ export function useSocket() {
     }
   };
 
-  return { sendMessage };
+  /** Ask the orchestrator's summarizer subagent to summarize text for TTS */
+  const summarize = (text: string): Promise<string> => {
+    return new Promise((resolve) => {
+      if (!socketRef.current?.connected || !text || text.length <= 120) {
+        resolve(text ?? '');
+        return;
+      }
+      // Use Socket.io acknowledgment callback for request/response
+      socketRef.current.emit(
+        'voice:summarize',
+        { text },
+        (resp: { summary: string }) => {
+          resolve(resp?.summary ?? text);
+        },
+      );
+      // Timeout fallback — don't hang if orchestrator doesn't respond
+      setTimeout(() => resolve(text.slice(0, 200)), 5000);
+    });
+  };
+
+  /** Open a terminal window attached to an agent's Claude Code session */
+  const openTerminal = (configId: string) => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('session:open-terminal', { configId });
+    }
+  };
+
+  return { sendMessage, summarize, openTerminal };
 }

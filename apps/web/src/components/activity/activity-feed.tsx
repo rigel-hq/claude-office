@@ -7,7 +7,7 @@ import type { AgentEvent } from '@rigelhq/shared';
 
 const EVENT_COLORS: Record<string, string> = {
   thinking: 'text-rigel-blue',
-  tool: 'text-rigel-yellow',
+  tool: 'text-rigel-orange',
   speaking: 'text-rigel-green',
   error: 'text-rigel-red',
   lifecycle: 'text-rigel-muted',
