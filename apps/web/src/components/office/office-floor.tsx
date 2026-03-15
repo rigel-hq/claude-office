@@ -9,22 +9,22 @@ function DeskUnit({ x, y }: { x: number; y: number }) {
   return (
     <g>
       {/* Desk surface */}
-      <rect x={x - 36} y={y - 50} width={72} height={30} rx={3}
+      <rect x={x - 44} y={y - 58} width={88} height={34} rx={3}
         fill="#1e293b" stroke="#334155" strokeWidth={0.5} />
       {/* Monitor */}
-      <rect x={x - 10} y={y - 46} width={20} height={14} rx={1.5}
+      <rect x={x - 13} y={y - 54} width={26} height={18} rx={2}
         fill="#0f172a" stroke="#475569" strokeWidth={0.4} />
       {/* Screen glow */}
-      <rect x={x - 8} y={y - 44} width={16} height={10} rx={1}
+      <rect x={x - 11} y={y - 52} width={22} height={14} rx={1.5}
         fill="#1e3a5f" opacity={0.4} />
       {/* Keyboard */}
-      <rect x={x - 8} y={y - 28} width={16} height={5} rx={1}
+      <rect x={x - 10} y={y - 32} width={20} height={6} rx={1}
         fill="#1e293b" stroke="#334155" strokeWidth={0.3} />
       {/* Chair */}
-      <ellipse cx={x} cy={y + 36} rx={14} ry={10}
+      <ellipse cx={x} cy={y + 44} rx={16} ry={12}
         fill="#1a1a2e" stroke="#334155" strokeWidth={0.4} />
       {/* Chair back */}
-      <rect x={x - 10} y={y + 26} width={20} height={6} rx={3}
+      <rect x={x - 12} y={y + 32} width={24} height={7} rx={3.5}
         fill="#1e1e38" stroke="#334155" strokeWidth={0.3} />
     </g>
   );

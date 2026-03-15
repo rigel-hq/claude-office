@@ -5,7 +5,7 @@ import { animate, stagger, spring } from 'animejs';
 import { generateAvatar, type AvatarData } from '@/lib/avatar-generator';
 import type { AgentState } from '@/store/agent-store';
 
-const R = 20; // avatar radius
+const R = 26; // avatar radius
 
 const STATUS_COLORS: Record<string, string> = {
   OFFLINE: '#6b7280',
@@ -317,7 +317,7 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
         {/* Ground shadow */}
         <ellipse
           ref={shadowRef}
-          cx={0} cy={R + 8} rx={R - 2} ry={4}
+          cx={0} cy={R + 10} rx={R - 2} ry={5}
           fill="#000" opacity={0}
         />
 
@@ -364,33 +364,33 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
 
         {/* Thinking dots */}
         {agent.status === 'THINKING' && (
-          <g ref={thinkDotsRef} transform="translate(16, -16)">
-            <circle cx={0} cy={0} r={2} fill={color} opacity={0.3} />
-            <circle cx={6} cy={0} r={2} fill={color} opacity={0.3} />
-            <circle cx={12} cy={0} r={2} fill={color} opacity={0.3} />
+          <g ref={thinkDotsRef} transform="translate(20, -20)">
+            <circle cx={0} cy={0} r={2.5} fill={color} opacity={0.3} />
+            <circle cx={7} cy={0} r={2.5} fill={color} opacity={0.3} />
+            <circle cx={14} cy={0} r={2.5} fill={color} opacity={0.3} />
           </g>
         )}
 
         {/* Speaking waveform bars */}
         {agent.status === 'SPEAKING' && (
-          <g ref={speakBarsRef} transform="translate(16, -16)">
-            <rect x={0} y={-4} width={2} height={8} rx={1} fill={color} style={{ transformOrigin: '1px 0px' }} />
-            <rect x={4} y={-3} width={2} height={6} rx={1} fill={color} style={{ transformOrigin: '5px 0px' }} />
-            <rect x={8} y={-4} width={2} height={8} rx={1} fill={color} style={{ transformOrigin: '9px 0px' }} />
+          <g ref={speakBarsRef} transform="translate(20, -20)">
+            <rect x={0} y={-5} width={2.5} height={10} rx={1.2} fill={color} style={{ transformOrigin: '1.25px 0px' }} />
+            <rect x={5} y={-4} width={2.5} height={8} rx={1.2} fill={color} style={{ transformOrigin: '6.25px 0px' }} />
+            <rect x={10} y={-5} width={2.5} height={10} rx={1.2} fill={color} style={{ transformOrigin: '11.25px 0px' }} />
           </g>
         )}
 
         {/* Tool badge */}
         <g ref={toolBadgeRef} opacity={agent.currentTool ? 1 : 0}>
           {agent.currentTool && (
-            <g transform="translate(0, 32)">
+            <g transform="translate(0, 38)">
               <rect
-                x={-(agent.currentTool.length * 3.2 + 10) / 2} y={0}
-                width={agent.currentTool.length * 3.2 + 10} height={13}
-                rx={6.5} fill="#f97316"
+                x={-(agent.currentTool.length * 3.8 + 12) / 2} y={0}
+                width={agent.currentTool.length * 3.8 + 12} height={15}
+                rx={7.5} fill="#f97316"
               />
-              <text x={0} y={7.5} textAnchor="middle" dominantBaseline="central"
-                fill="#fff" fontSize={7} fontWeight="600" fontFamily="system-ui">
+              <text x={0} y={8.5} textAnchor="middle" dominantBaseline="central"
+                fill="#fff" fontSize={8} fontWeight="600" fontFamily="system-ui">
                 {agent.currentTool}
               </text>
             </g>
@@ -398,30 +398,31 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
         </g>
 
         {/* Name label */}
-        <g transform={`translate(0, ${agent.currentTool ? 48 : 30})`}>
+        <g transform={`translate(0, ${agent.currentTool ? 56 : 36})`}>
           <rect
-            x={-34} y={0} width={68} height={16} rx={8}
-            fill="rgba(15, 23, 42, 0.85)"
-            stroke="rgba(51, 65, 85, 0.4)"
-            strokeWidth={0.5}
+            x={-58} y={0} width={116} height={20} rx={10}
+            fill="rgba(15, 23, 42, 0.9)"
+            stroke="rgba(51, 65, 85, 0.5)"
+            strokeWidth={0.6}
           />
-          <text x={0} y={9} textAnchor="middle" dominantBaseline="central"
-            fill={isActive ? '#e2e8f0' : '#64748b'}
-            fontSize={7} fontWeight={isWorking ? 600 : 400} fontFamily="system-ui">
-            {agent.name.length > 14 ? agent.name.slice(0, 12) + '\u2026' : agent.name}
+          <text x={0} y={11} textAnchor="middle" dominantBaseline="central"
+            fill={isActive ? '#e2e8f0' : '#94a3b8'}
+            fontSize={10} fontWeight={isWorking ? 600 : 500} fontFamily="system-ui"
+            letterSpacing="0.01em">
+            {agent.name.length > 20 ? agent.name.slice(0, 18) + '\u2026' : agent.name}
           </text>
         </g>
 
         {/* Speech bubble */}
         <g ref={speechRef} opacity={0}>
           {agent.speechBubble && agent.status === 'SPEAKING' && (
-            <g transform="translate(0, -40)">
-              <rect x={-55} y={-10} width={110} height={18} rx={9}
+            <g transform="translate(0, -46)">
+              <rect x={-65} y={-11} width={130} height={20} rx={10}
                 fill="rgba(168, 85, 247, 0.92)" />
-              <polygon points="-4,8 4,8 0,14" fill="rgba(168, 85, 247, 0.92)" />
+              <polygon points="-4,9 4,9 0,16" fill="rgba(168, 85, 247, 0.92)" />
               <text x={0} y={0} textAnchor="middle" dominantBaseline="central"
-                fill="#fff" fontSize={7} fontFamily="system-ui">
-                {agent.speechBubble.length > 26 ? agent.speechBubble.slice(0, 24) + '\u2026' : agent.speechBubble}
+                fill="#fff" fontSize={8.5} fontFamily="system-ui">
+                {agent.speechBubble.length > 28 ? agent.speechBubble.slice(0, 26) + '\u2026' : agent.speechBubble}
               </text>
             </g>
           )}
