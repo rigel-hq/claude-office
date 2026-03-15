@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { useRef, useEffect, useState } from 'react';
+import { animate, stagger, spring } from 'animejs';
 import { generateAvatar, type AvatarData } from '@/lib/avatar-generator';
 import type { AgentState } from '@/store/agent-store';
 
@@ -17,19 +17,19 @@ const STATUS_COLORS: Record<string, string> = {
   ERROR: '#ef4444',
 };
 
-// Movement offsets: when working, agent slides forward from desk
+// Movement offsets: working agents slide forward from desk
 function getMotionOffset(status: string): { dx: number; dy: number } {
   switch (status) {
-    case 'THINKING':    return { dx: 0, dy: -8 };
-    case 'TOOL_CALLING': return { dx: 4, dy: -4 };
-    case 'SPEAKING':    return { dx: 0, dy: -12 };
-    case 'COLLABORATING': return { dx: 6, dy: -6 };
-    case 'ERROR':       return { dx: 0, dy: 2 };
-    default:            return { dx: 0, dy: 0 };
+    case 'THINKING':      return { dx: 0, dy: -10 };
+    case 'TOOL_CALLING':  return { dx: 5, dy: -5 };
+    case 'SPEAKING':      return { dx: 0, dy: -14 };
+    case 'COLLABORATING': return { dx: 8, dy: -8 };
+    case 'ERROR':         return { dx: 0, dy: 3 };
+    default:              return { dx: 0, dy: 0 };
   }
 }
 
-// ── Face sub-components ──────────────────────────────────────
+// ── Face sub-components (static SVG — no animation) ──────────
 
 function HairShape({ style, color, cx, cy, r }: {
   style: string; color: string; cx: number; cy: number; r: number;
@@ -121,17 +121,11 @@ function AvatarFace({ data, cx, cy, r }: { data: AvatarData; cx: number; cy: num
 
   return (
     <g>
-      {/* Shirt / body */}
       <ellipse cx={cx} cy={cy + r * 0.9} rx={r * 0.7} ry={r * 0.5} fill={data.shirtColor} />
-      {/* Neck */}
       <rect x={cx - 3 * s} y={cy + r * 0.25} width={6 * s} height={8 * s} fill={data.skinColor} />
-      {/* Face */}
       <ellipse cx={cx} cy={cy - r * 0.05} rx={faceRx} ry={faceRy} fill={data.skinColor} />
-      {/* Hair */}
       <HairShape style={data.hairStyle} color={data.hairColor} cx={cx} cy={cy} r={r} />
-      {/* Eyes */}
       <Eyes style={data.eyeStyle} cx={cx} cy={cy} r={r} />
-      {/* Mouth */}
       <path
         d={`M ${cx - 3 * s} ${cy + r * 0.28} Q ${cx} ${cy + r * 0.38} ${cx + 3 * s} ${cy + r * 0.28}`}
         fill="none" stroke="#1a1a2e" strokeWidth={0.8} opacity={0.35}
@@ -140,7 +134,7 @@ function AvatarFace({ data, cx, cy, r }: { data: AvatarData; cx: number; cy: num
   );
 }
 
-// ── Main avatar (placed in the office SVG) ───────────────────
+// ── Main avatar with anime.js animations ─────────────────────
 
 export function AgentAvatar({ agent }: { agent: AgentState }) {
   const avatar = generateAvatar(agent.configId);
@@ -149,64 +143,196 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
   const isWorking = ['THINKING', 'TOOL_CALLING', 'SPEAKING', 'COLLABORATING'].includes(agent.status);
   const clipId = `clip-${agent.configId}`;
 
-  const offset = useMemo(() => getMotionOffset(agent.status), [agent.status]);
+  // Refs for animated elements
+  const groupRef = useRef<SVGGElement>(null);
+  const bobRef = useRef<SVGGElement>(null);
+  const pulseRef = useRef<SVGCircleElement>(null);
+  const shadowRef = useRef<SVGEllipseElement>(null);
+  const thinkDotsRef = useRef<SVGGElement>(null);
+  const speakBarsRef = useRef<SVGGElement>(null);
+  const toolBadgeRef = useRef<SVGGElement>(null);
+  const speechRef = useRef<SVGGElement>(null);
+  const spinRef = useRef<SVGCircleElement>(null);
 
-  // Idle agents get a subtle breathing animation; working agents get a bob
-  const bobAnimation = isWorking
-    ? { y: [0, -3, 0, 2, 0] }
-    : isActive
-      ? { y: [0, -1.5, 0] }
-      : {};
-  const bobTransition = isWorking
-    ? { duration: 2.5, repeat: Infinity, ease: 'easeInOut' as const }
-    : isActive
-      ? { duration: 4, repeat: Infinity, ease: 'easeInOut' as const }
-      : {};
+  // Stable initial position for SSR (React won't override anime.js)
+  const [initialPos] = useState(() => ({
+    x: agent.position.x,
+    y: agent.position.y,
+  }));
+
+  const offset = getMotionOffset(agent.status);
+  const targetX = agent.position.x + offset.dx;
+  const targetY = agent.position.y + offset.dy;
+
+  // ── Position: spring-based movement ──
+  useEffect(() => {
+    if (!groupRef.current) return;
+    const anim = animate(groupRef.current, {
+      translateX: `${targetX}px`,
+      translateY: `${targetY}px`,
+      ease: spring({ stiffness: 100, damping: 20 }),
+      composition: 'replace',
+    });
+    return () => { anim.pause(); };
+  }, [targetX, targetY]);
+
+  // ── Bobbing / breathing: smooth sine wave ──
+  useEffect(() => {
+    if (!bobRef.current) return;
+    if (isWorking) {
+      const anim = animate(bobRef.current, {
+        translateY: ['0px', '-5px', '0px', '3px', '0px'],
+        ease: 'inOutSine',
+        duration: 2800,
+        loop: true,
+      });
+      return () => { anim.pause(); };
+    } else if (isActive) {
+      const anim = animate(bobRef.current, {
+        translateY: ['0px', '-2px', '0px'],
+        ease: 'inOutSine',
+        duration: 4500,
+        loop: true,
+      });
+      return () => { anim.pause(); };
+    }
+  }, [isWorking, isActive]);
+
+  // ── Pulse glow: smooth expansion ──
+  useEffect(() => {
+    if (!pulseRef.current) return;
+    if (!isWorking) {
+      pulseRef.current.setAttribute('opacity', '0');
+      return;
+    }
+    const anim = animate(pulseRef.current, {
+      r: [R + 6, R + 14, R + 6],
+      opacity: [0.3, 0.05, 0.3],
+      ease: 'inOutQuad',
+      duration: 2200,
+      loop: true,
+    });
+    return () => { anim.pause(); };
+  }, [isWorking]);
+
+  // ── Ground shadow: breathes with bobbing ──
+  useEffect(() => {
+    if (!shadowRef.current) return;
+    if (!isActive) {
+      shadowRef.current.setAttribute('opacity', '0');
+      return;
+    }
+    shadowRef.current.setAttribute('opacity', '0.12');
+    if (isWorking) {
+      const anim = animate(shadowRef.current, {
+        rx: [R - 2, R + 3, R - 2],
+        opacity: [0.12, 0.06, 0.12],
+        ease: 'inOutSine',
+        duration: 2800,
+        loop: true,
+      });
+      return () => { anim.pause(); };
+    }
+  }, [isWorking, isActive]);
+
+  // ── Thinking dots: staggered spring bounce ──
+  useEffect(() => {
+    if (!thinkDotsRef.current || agent.status !== 'THINKING') return;
+    const dots = thinkDotsRef.current.querySelectorAll('circle');
+    if (dots.length === 0) return;
+    const anim = animate(dots, {
+      translateY: ['0px', '-4px', '0px'],
+      opacity: [0.3, 1, 0.3],
+      ease: spring({ stiffness: 300, damping: 8 }),
+      delay: stagger(120),
+      loop: true,
+      duration: 1000,
+    });
+    return () => { anim.pause(); };
+  }, [agent.status]);
+
+  // ── Speaking bars: oscillation ──
+  useEffect(() => {
+    if (!speakBarsRef.current || agent.status !== 'SPEAKING') return;
+    const bars = speakBarsRef.current.querySelectorAll('rect');
+    if (bars.length === 0) return;
+    const anim = animate(bars, {
+      scaleY: [0.3, 1, 0.3],
+      ease: 'inOutSine',
+      delay: stagger(80),
+      loop: true,
+      duration: 500,
+    });
+    return () => { anim.pause(); };
+  }, [agent.status]);
+
+  // ── Tool badge: spring entrance ──
+  useEffect(() => {
+    if (!toolBadgeRef.current) return;
+    if (!agent.currentTool) {
+      toolBadgeRef.current.setAttribute('opacity', '0');
+      return;
+    }
+    animate(toolBadgeRef.current, {
+      opacity: [0, 1],
+      scale: [0.2, 1],
+      translateY: ['12px', '0px'],
+      ease: spring({ stiffness: 250, damping: 14 }),
+    });
+  }, [agent.currentTool]);
+
+  // ── Speech bubble: elastic pop-in ──
+  useEffect(() => {
+    if (!speechRef.current) return;
+    if (!agent.speechBubble || agent.status !== 'SPEAKING') {
+      speechRef.current.setAttribute('opacity', '0');
+      return;
+    }
+    animate(speechRef.current, {
+      opacity: [0, 1],
+      scale: [0.4, 1],
+      translateY: ['10px', '0px'],
+      ease: spring({ stiffness: 180, damping: 12 }),
+    });
+  }, [agent.speechBubble, agent.status]);
+
+  // ── Tool calling: spinning dash ring ──
+  useEffect(() => {
+    if (!spinRef.current || agent.status !== 'TOOL_CALLING') return;
+    const anim = animate(spinRef.current, {
+      rotate: [0, 360],
+      ease: 'linear',
+      duration: 3000,
+      loop: true,
+    });
+    return () => { anim.pause(); };
+  }, [agent.status]);
 
   return (
-    <motion.g
-      initial={false}
-      animate={{
-        x: agent.position.x + offset.dx,
-        y: agent.position.y + offset.dy,
-      }}
-      transition={{
-        type: 'spring',
-        stiffness: 80,
-        damping: 18,
-        mass: 0.8,
-      }}
+    <g
+      ref={groupRef}
+      style={{ transform: `translateX(${initialPos.x}px) translateY(${initialPos.y}px)` }}
     >
-      {/* Inner bobbing animation */}
-      <motion.g
-        animate={bobAnimation}
-        transition={bobTransition}
-      >
-        {/* Shadow on the ground */}
-        {isActive && (
-          <motion.ellipse
-            cx={0} cy={R + 8} rx={R - 2} ry={4}
-            fill="#000" opacity={0.15}
-            animate={isWorking ? { rx: [R - 2, R, R - 2], opacity: [0.15, 0.1, 0.15] } : {}}
-            transition={isWorking ? { duration: 2.5, repeat: Infinity, ease: 'easeInOut' } : {}}
-          />
-        )}
+      <g ref={bobRef}>
+        {/* Ground shadow */}
+        <ellipse
+          ref={shadowRef}
+          cx={0} cy={R + 8} rx={R - 2} ry={4}
+          fill="#000" opacity={0}
+        />
 
-        {/* Pulse glow */}
-        {isWorking && (
-          <motion.circle
-            cx={0} cy={0} r={R + 6}
-            fill="none" stroke={color} strokeWidth={2} opacity={0.25}
-            animate={{ r: [R + 6, R + 10, R + 6], opacity: [0.25, 0.08, 0.25] }}
-            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-          />
-        )}
+        {/* Pulse glow ring */}
+        <circle
+          ref={pulseRef}
+          cx={0} cy={0} r={R + 6}
+          fill="none" stroke={color} strokeWidth={2}
+          opacity={0}
+        />
 
         {/* Status ring */}
         <circle
           cx={0} cy={0} r={R + 2}
-          fill="none"
-          stroke={color}
+          fill="none" stroke={color}
           strokeWidth={isWorking ? 3 : 2}
           strokeDasharray={agent.status === 'TOOL_CALLING' ? '6 3' : undefined}
           opacity={isActive ? 1 : 0.25}
@@ -214,16 +340,16 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
 
         {/* Spinning dash for TOOL_CALLING */}
         {agent.status === 'TOOL_CALLING' && (
-          <motion.circle
+          <circle
+            ref={spinRef}
             cx={0} cy={0} r={R + 2}
             fill="none" stroke={color} strokeWidth={2}
             strokeDasharray="6 3"
-            animate={{ rotate: 360 }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
+            style={{ transformOrigin: '0px 0px' }}
           />
         )}
 
-        {/* Avatar background */}
+        {/* Avatar disc */}
         <circle cx={0} cy={0} r={R} fill="#1e293b" />
 
         {/* Clipped face */}
@@ -238,38 +364,25 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
 
         {/* Thinking dots */}
         {agent.status === 'THINKING' && (
-          <g transform="translate(16, -16)">
-            {[0, 1, 2].map((i) => (
-              <motion.circle
-                key={i}
-                cx={i * 5} cy={0} r={2}
-                fill={color}
-                animate={{ opacity: [0.3, 1, 0.3], y: [0, -2, 0] }}
-                transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
-              />
-            ))}
+          <g ref={thinkDotsRef} transform="translate(16, -16)">
+            <circle cx={0} cy={0} r={2} fill={color} opacity={0.3} />
+            <circle cx={6} cy={0} r={2} fill={color} opacity={0.3} />
+            <circle cx={12} cy={0} r={2} fill={color} opacity={0.3} />
           </g>
         )}
 
-        {/* Speaking indicator — waveform */}
+        {/* Speaking waveform bars */}
         {agent.status === 'SPEAKING' && (
-          <g transform="translate(16, -16)">
-            <motion.rect x={0} y={-4} width={2} height={8} rx={1} fill={color}
-              animate={{ scaleY: [0.4, 1, 0.4] }} transition={{ duration: 0.5, repeat: Infinity }} />
-            <motion.rect x={4} y={-3} width={2} height={6} rx={1} fill={color}
-              animate={{ scaleY: [1, 0.4, 1] }} transition={{ duration: 0.5, repeat: Infinity }} />
-            <motion.rect x={8} y={-4} width={2} height={8} rx={1} fill={color}
-              animate={{ scaleY: [0.6, 1, 0.6] }} transition={{ duration: 0.5, repeat: Infinity, delay: 0.15 }} />
+          <g ref={speakBarsRef} transform="translate(16, -16)">
+            <rect x={0} y={-4} width={2} height={8} rx={1} fill={color} style={{ transformOrigin: '1px 0px' }} />
+            <rect x={4} y={-3} width={2} height={6} rx={1} fill={color} style={{ transformOrigin: '5px 0px' }} />
+            <rect x={8} y={-4} width={2} height={8} rx={1} fill={color} style={{ transformOrigin: '9px 0px' }} />
           </g>
         )}
 
         {/* Tool badge */}
-        {agent.currentTool && (
-          <motion.g
-            initial={{ opacity: 0, scale: 0.5 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ type: 'spring', stiffness: 200, damping: 15 }}
-          >
+        <g ref={toolBadgeRef} opacity={agent.currentTool ? 1 : 0}>
+          {agent.currentTool && (
             <g transform="translate(0, 32)">
               <rect
                 x={-(agent.currentTool.length * 3.2 + 10) / 2} y={0}
@@ -281,10 +394,10 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
                 {agent.currentTool}
               </text>
             </g>
-          </motion.g>
-        )}
+          )}
+        </g>
 
-        {/* Name label (glassmorphic pill) */}
+        {/* Name label */}
         <g transform={`translate(0, ${agent.currentTool ? 48 : 30})`}>
           <rect
             x={-34} y={0} width={68} height={16} rx={8}
@@ -300,12 +413,8 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
         </g>
 
         {/* Speech bubble */}
-        {agent.speechBubble && agent.status === 'SPEAKING' && (
-          <motion.g
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ type: 'spring', stiffness: 150, damping: 12 }}
-          >
+        <g ref={speechRef} opacity={0}>
+          {agent.speechBubble && agent.status === 'SPEAKING' && (
             <g transform="translate(0, -40)">
               <rect x={-55} y={-10} width={110} height={18} rx={9}
                 fill="rgba(168, 85, 247, 0.92)" />
@@ -315,10 +424,10 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
                 {agent.speechBubble.length > 26 ? agent.speechBubble.slice(0, 24) + '\u2026' : agent.speechBubble}
               </text>
             </g>
-          </motion.g>
-        )}
-      </motion.g>
-    </motion.g>
+          )}
+        </g>
+      </g>
+    </g>
   );
 }
 
