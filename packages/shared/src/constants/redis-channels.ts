@@ -9,6 +9,11 @@ export const REDIS_CHANNELS = {
   TASK_UPDATES: 'rigelhq:tasks:updates',
   /** User-agent chat messages */
   CHAT_MESSAGES: 'rigelhq:chat:messages',
+  /** Collaboration lifecycle events */
+  COLLABORATIONS: 'rigelhq:collaborations',
+  /** Per-collaboration message stream */
+  collaborationMessages: (collabId: string) =>
+    `rigelhq:collaboration:${collabId}:messages`,
 } as const;
 
 /** Redis Stream keys (persistent) */
@@ -17,4 +22,6 @@ export const REDIS_STREAMS = {
   EVENTS: 'rigelhq:events:stream',
   /** Per-agent event stream */
   agentEvents: (configId: string) => `rigelhq:agent:${configId}:stream`,
+  /** Collaboration event history */
+  COLLABORATIONS: 'rigelhq:collaborations:stream',
 } as const;

@@ -1,4 +1,4 @@
-export type EventStream = 'lifecycle' | 'tool' | 'assistant' | 'error';
+export type EventStream = 'lifecycle' | 'tool' | 'assistant' | 'error' | 'collaboration' | 'movement';
 
 export interface AgentEvent {
   id: string;
@@ -8,7 +8,7 @@ export interface AgentEvent {
   stream: EventStream;
   timestamp: number;
   data: {
-    phase?: 'start' | 'thinking' | 'end';
+    phase?: 'start' | 'thinking' | 'end' | 'message' | 'waypoint' | 'arrived';
     tool?: string;
     toolArgs?: Record<string, unknown>;
     text?: string;

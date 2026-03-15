@@ -3,12 +3,15 @@ import type { AgentEvent, AgentStatus } from '@rigelhq/shared';
 import { AGENT_ROLE_MAP } from '@rigelhq/shared';
 import type { GatewayAdapter, AgentHandle, SpawnOptions, SessionInfo } from '../adapters/adapter.js';
 import type { EventBus } from './event-bus.js';
+import type { CollaborationManager } from './collaboration-manager.js';
 
 interface ActiveAgent {
   handle: AgentHandle;
   configId: string;
   status: AgentStatus;
   lastActivity: number;
+  /** The runId of the current query — used to discard stale events from prior runs */
+  currentRunId: string | null;
 }
 
 export class AgentManager {
@@ -24,6 +27,12 @@ export class AgentManager {
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Agents currently being steered — suppress completion side-effects */
   private steering = new Set<string>();
+  /** Track subagent IDs spawned by each parent agent, so we can clean them up on parent completion */
+  private parentSubagents = new Map<string, Set<string>>();
+  /** Subagents that have completed (lifecycle:end received) — guards against late events reverting IDLE */
+  private completedSubagents = new Set<string>();
+  /** Optional collaboration manager for detecting inter-agent collaboration */
+  private collaborationManager: CollaborationManager | null = null;
 
   constructor(
     readonly adapter: GatewayAdapter,
@@ -32,6 +41,11 @@ export class AgentManager {
     private maxConcurrent: number = 5,
     private idleTimeoutMs: number = 5 * 60 * 1000,
   ) {}
+
+  /** Attach a CollaborationManager to observe all agent events */
+  setCollaborationManager(cm: CollaborationManager): void {
+    this.collaborationManager = cm;
+  }
 
   get activeCount(): number {
     return this.active.size;
@@ -72,17 +86,33 @@ export class AgentManager {
     taskPrompt: string,
     options?: SpawnOptions,
   ): Promise<AgentHandle> {
+    // We need the handle reference to guard against stale events from prior runs.
+    // The onEvent callback below will discard events if the handle has been replaced
+    // by a newer spawn for the same configId.
+    let handleRef: AgentHandle | null = null;
+
     const onEvent = async (event: AgentEvent) => {
+      // Guard: discard events from a prior run whose handle has been replaced.
+      // This prevents a race where the old query's lifecycle:end fires after a
+      // new spawn has registered a new handle, which would incorrectly set the
+      // new agent to IDLE while it is still processing.
+      const current = this.active.get(configId);
+      if (current && handleRef && current.handle !== handleRef) {
+        console.log(`[AgentMgr] Discarding stale event for ${configId} (old handle, stream: ${event.stream}, phase: ${event.data.phase ?? 'n/a'})`);
+        return;
+      }
       await this.handleEvent(configId, event);
     };
 
     const handle = await this.adapter.spawn(configId, systemPrompt, taskPrompt, onEvent, options);
+    handleRef = handle;
 
     const activeAgent: ActiveAgent = {
       handle,
       configId,
       status: 'THINKING',
       lastActivity: Date.now(),
+      currentRunId: null,
     };
 
     this.active.set(configId, activeAgent);
@@ -186,6 +216,7 @@ export class AgentManager {
       configId,
       status: 'IDLE',
       lastActivity: Date.now(),
+      currentRunId: null,
     });
   }
 
@@ -206,8 +237,35 @@ export class AgentManager {
     if (isSubagentEvent) {
       // Upsert the specialist agent in DB so the UI can show it
       const specialistId = event.agentId;
+
+      // Track this subagent under its parent so we can clean up on parent completion
+      if (!this.parentSubagents.has(configId)) {
+        this.parentSubagents.set(configId, new Set());
+      }
+      this.parentSubagents.get(configId)!.add(specialistId);
+
+      // If this subagent's lifecycle already ended, only allow lifecycle:end events through
+      // (guards against late assistant/tool events reverting IDLE back to SPEAKING)
+      if (this.completedSubagents.has(specialistId)) {
+        if (event.stream !== 'lifecycle' || event.data.phase !== 'end') {
+          console.log(`[AgentMgr] Discarding late event for completed subagent ${specialistId} (stream: ${event.stream})`);
+          // Still publish the raw event for logging, but don't update status
+          await this.eventBus.publish(event);
+          return;
+        }
+      }
+
       const specialistStatus = this.mapEventToStatus(event);
       if (specialistStatus) {
+        // Mark subagent as completed when lifecycle ends — prevents late events from reverting status
+        if (event.stream === 'lifecycle' && event.data.phase === 'end') {
+          this.completedSubagents.add(specialistId);
+          console.log(`[AgentMgr] Subagent ${specialistId} lifecycle ended — marking IDLE`);
+        } else if (event.stream === 'lifecycle' && event.data.phase === 'start') {
+          // New lifecycle start — subagent is being re-used, clear the completed guard
+          this.completedSubagents.delete(specialistId);
+        }
+
         const roleMeta = AGENT_ROLE_MAP.get(specialistId);
         const name = roleMeta?.name ?? specialistId;
         const role = roleMeta?.role ?? 'Specialist';
@@ -243,6 +301,15 @@ export class AgentManager {
     // Publish event
     await this.eventBus.publish(event);
 
+    // Notify CollaborationManager so it can detect collaboration patterns
+    if (this.collaborationManager) {
+      try {
+        await this.collaborationManager.onAgentEvent(event, configId);
+      } catch (err) {
+        console.warn(`[AgentMgr] CollaborationManager error for ${configId}:`, err);
+      }
+    }
+
     // Handle lifecycle end — mark IDLE but keep session alive
     // Skip during steering (interrupt + immediate re-send)
     // Only trigger for the parent agent's lifecycle end, not subagent lifecycle ends
@@ -274,6 +341,12 @@ export class AgentManager {
   private async onAgentComplete(configId: string): Promise<void> {
     const agent = this.active.get(configId);
 
+    // Transition all tracked subagents to IDLE as a safety net.
+    // If a subagent already received its own lifecycle:end, this is a harmless no-op
+    // (the DB already has IDLE). But if the subagent's lifecycle:end was lost or
+    // never emitted, this ensures they don't stay stuck in SPEAKING/THINKING.
+    await this.transitionSubagentsToIdle(configId);
+
     // Keep agent in active map if it has a session (can be resumed)
     if (agent?.handle.sessionId) {
       console.log(`[AgentMgr] ${configId} completed — keeping IDLE (session: ${agent.handle.sessionId.slice(0, 8)}...)`);
@@ -297,6 +370,31 @@ export class AgentManager {
     await this.processQueue();
   }
 
+  /** Transition all subagents of a parent to IDLE and clean up tracking state */
+  private async transitionSubagentsToIdle(parentConfigId: string): Promise<void> {
+    const subagentIds = this.parentSubagents.get(parentConfigId);
+    if (!subagentIds || subagentIds.size === 0) return;
+
+    console.log(`[AgentMgr] Parent ${parentConfigId} completed — transitioning ${subagentIds.size} subagent(s) to IDLE`);
+
+    for (const subagentId of subagentIds) {
+      try {
+        await this.db.agent.update({
+          where: { configId: subagentId },
+          data: { status: 'IDLE' },
+        });
+        await this.eventBus.publishStatus(subagentId, 'IDLE');
+        this.completedSubagents.add(subagentId);
+      } catch (err) {
+        // Best effort — subagent may not exist in DB if it was never upserted
+        console.warn(`[AgentMgr] Failed to transition subagent ${subagentId} to IDLE:`, err);
+      }
+    }
+
+    // Clean up the tracking set for this parent
+    this.parentSubagents.delete(parentConfigId);
+  }
+
   private async processQueue(): Promise<void> {
     if (this.queue.length === 0 || this.active.size >= this.maxConcurrent) return;
 
@@ -312,8 +410,40 @@ export class AgentManager {
   private resetIdleTimer(configId: string): void {
     this.clearIdleTimer(configId);
     this.idleTimers.set(configId, setTimeout(() => {
-      this.stopAgent(configId).catch(console.error);
+      this.hibernateAgent(configId).catch(console.error);
     }, this.idleTimeoutMs));
+  }
+
+  /** Hibernate an idle agent: stop its process to free resources but preserve
+   *  the session ID so the session can be resumed later via sendMessage(). */
+  private async hibernateAgent(configId: string): Promise<void> {
+    const agent = this.active.get(configId);
+    if (!agent) return;
+
+    const sessionId = agent.handle.sessionId;
+    if (!sessionId) {
+      // No session to preserve — full stop
+      await this.stopAgent(configId);
+      return;
+    }
+
+    console.log(`[AgentMgr] Hibernating ${configId} — preserving session ${sessionId.slice(0, 8)}... for resumption`);
+
+    this.clearIdleTimer(configId);
+
+    // Transition subagents to IDLE as a safety net
+    await this.transitionSubagentsToIdle(configId);
+
+    // Stop the underlying process but keep the entry in the active map
+    // so hasActiveSession() still returns true and sendMessage() can resume.
+    await this.adapter.stop(agent.handle);
+
+    agent.status = 'IDLE';
+    await this.db.agent.update({
+      where: { configId },
+      data: { status: 'IDLE', pid: null },
+    });
+    await this.eventBus.publishStatus(configId, 'IDLE');
   }
 
   private clearIdleTimer(configId: string): void {
@@ -329,8 +459,18 @@ export class AgentManager {
     if (!agent) return;
 
     this.clearIdleTimer(configId);
-    await this.adapter.stop(agent.handle);
+
+    // Transition all tracked subagents to IDLE before stopping the parent.
+    // This ensures subagents don't stay stuck in SPEAKING/THINKING when the
+    // parent is stopped (e.g., CEAManager spawning a fresh session).
+    await this.transitionSubagentsToIdle(configId);
+
+    // Remove from active map BEFORE stopping the adapter so that any stale
+    // lifecycle:end events from the dying query find no active entry and are
+    // safely ignored by handleEvent's null-agent guard.
     this.active.delete(configId);
+
+    await this.adapter.stop(agent.handle);
 
     await this.db.agent.update({
       where: { configId },
@@ -358,5 +498,7 @@ export class AgentManager {
 
     this.active.clear();
     this.queue = [];
+    this.parentSubagents.clear();
+    this.completedSubagents.clear();
   }
 }

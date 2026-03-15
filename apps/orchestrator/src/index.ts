@@ -6,9 +6,12 @@ import { EventBus } from './services/event-bus.js';
 import { AgentManager } from './services/agent-manager.js';
 import { TaskManager } from './services/task-manager.js';
 import { CEAManager } from './services/cea-manager.js';
+import { CollaborationManager } from './services/collaboration-manager.js';
 import { WebSocketServer } from './services/websocket-server.js';
 import { MockSimulation } from './services/mock-simulation.js';
 import { createAdapter } from './adapters/index.js';
+import { AGENT_ROLES } from '@rigelhq/shared';
+import type { PrismaClient } from '@prisma/client';
 
 async function main() {
   const config = loadConfig();
@@ -34,18 +37,25 @@ async function main() {
   const agentManager = new AgentManager(adapter, eventBus, db, config.RIGELHQ_MAX_CONCURRENT_AGENTS);
   const taskManager = new TaskManager(db, eventBus);
   const ceaManager = new CEAManager(agentManager, taskManager, eventBus);
+  const collaborationManager = new CollaborationManager(eventBus);
+  agentManager.setCollaborationManager(collaborationManager);
 
   // HTTP + WebSocket server
   const httpServer = http.createServer();
   const wsServer = new WebSocketServer(httpServer, eventBus);
 
-  // Wire CEA and AgentManager to WebSocket for chat message routing
+  // Wire CEA, AgentManager, CollaborationManager, and DB to WebSocket for chat message routing and status sync
   wsServer.setCEAManager(ceaManager);
   wsServer.setAgentManager(agentManager);
+  wsServer.setCollaborationManager(collaborationManager);
+  wsServer.setDb(db);
 
   httpServer.listen(config.RIGELHQ_ORCHESTRATOR_PORT, () => {
     console.log(`[RigelHQ Orchestrator] WebSocket server on port ${config.RIGELHQ_ORCHESTRATOR_PORT}`);
   });
+
+  // Seed all MVP agents in DB so they appear in the UI from the start
+  await seedMvpAgents(db);
 
   // Start CEA
   await ceaManager.start();
@@ -74,6 +84,7 @@ async function main() {
     }, 30_000);
 
     if (mockSim) mockSim.stop();
+    await collaborationManager.shutdown();
     await ceaManager.stop();
     await agentManager.stopAll();
 
@@ -87,6 +98,33 @@ async function main() {
 
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+}
+
+/** Reset all agent statuses on boot (clears stale state from prior runs)
+ *  then pre-register mvpActive agents so the UI shows them from the start. */
+async function seedMvpAgents(db: PrismaClient) {
+  // Reset ALL existing agents to OFFLINE — no agents are running at boot time
+  await db.agent.updateMany({
+    data: { status: 'OFFLINE', pid: null },
+  });
+
+  // Upsert mvpActive agents as IDLE (ready/available) so the UI shows them as active from boot
+  const mvpAgents = AGENT_ROLES.filter(r => r.mvpActive);
+  for (const role of mvpAgents) {
+    await db.agent.upsert({
+      where: { configId: role.id },
+      update: { status: 'IDLE' },
+      create: {
+        configId: role.id,
+        name: role.name,
+        role: role.role,
+        icon: role.icon,
+        status: 'IDLE',
+        pid: null,
+      },
+    });
+  }
+  console.log(`[RigelHQ Orchestrator] Reset all agents, ${mvpAgents.length} MVP agents set to IDLE`);
 }
 
 main().catch((err) => {

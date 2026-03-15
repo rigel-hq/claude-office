@@ -5,12 +5,16 @@ import { REDIS_CHANNELS, REDIS_STREAMS } from '@rigelhq/shared';
 import type { EventBus } from './event-bus.js';
 import type { CEAManager } from './cea-manager.js';
 import type { AgentManager } from './agent-manager.js';
+import type { CollaborationManager } from './collaboration-manager.js';
 import { agentConfigLoader } from './agent-config-loader.js';
+import type { PrismaClient } from '@prisma/client';
 
 export class WebSocketServer {
   private io: SocketServer;
   private ceaManager: CEAManager | null = null;
   private agentManager: AgentManager | null = null;
+  private collaborationManager: CollaborationManager | null = null;
+  private db: PrismaClient | null = null;
 
   constructor(
     httpServer: HttpServer,
@@ -36,6 +40,16 @@ export class WebSocketServer {
     this.agentManager = agentManager;
   }
 
+  /** Attach collaboration manager for sending active collaboration snapshots on connect */
+  setCollaborationManager(cm: CollaborationManager): void {
+    this.collaborationManager = cm;
+  }
+
+  /** Attach DB for sending agent status snapshots on connect */
+  setDb(db: PrismaClient): void {
+    this.db = db;
+  }
+
   private setupHandlers(): void {
     this.io.on('connection', async (socket) => {
       console.log(`[WS] Client connected: ${socket.id}`);
@@ -46,6 +60,28 @@ export class WebSocketServer {
         socket.emit('event:history', history);
       } catch {
         // Redis might not have stream yet
+      }
+
+      // Send current agent statuses from DB so the UI is immediately up-to-date
+      if (this.db) {
+        try {
+          const agents = await this.db.agent.findMany({
+            select: { configId: true, status: true },
+          });
+          socket.emit('agent:status-snapshot', agents);
+        } catch {
+          // Best effort
+        }
+      }
+
+      // Send active collaborations snapshot so the UI shows current lines immediately
+      if (this.collaborationManager) {
+        try {
+          const collabs = this.collaborationManager.getActiveCollaborations();
+          socket.emit('collaboration:snapshot', collabs);
+        } catch {
+          // Best effort
+        }
       }
 
       // Handle user chat messages — route to CEA or specific agent
