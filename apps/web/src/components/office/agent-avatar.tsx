@@ -138,6 +138,51 @@ function AvatarFace({ data, cx, cy, r }: { data: AvatarData; cx: number; cy: num
   );
 }
 
+// ── Directional speech bubble ─────────────────────────────────
+
+function SpeechBubble({
+  text,
+  targetAgentId,
+  agents,
+  collabColor,
+}: {
+  text: string;
+  targetAgentId: string | null;
+  agents: Map<string, AgentState>;
+  collabColor: string | null;
+}) {
+  const truncated = text.length > 28 ? text.slice(0, 26) + '\u2026' : text;
+  const bgColor = collabColor
+    ? `${collabColor}dd`
+    : 'rgba(110, 85, 160, 0.88)';
+
+  // Get target agent name for the directional indicator
+  const targetAgent = targetAgentId ? agents.get(targetAgentId) : null;
+  const targetLabel = targetAgent
+    ? `\u2192 ${targetAgent.icon}`
+    : null;
+
+  return (
+    <g transform="translate(0, -46)">
+      <rect x={-65} y={-11} width={130} height={20} rx={10} fill={bgColor} />
+      <polygon points="-4,9 4,9 0,16" fill={bgColor} />
+
+      {/* Directional indicator: small icon/arrow showing target (PRD P1) */}
+      {targetLabel && (
+        <text x={-58} y={0} textAnchor="start" dominantBaseline="central"
+          fill="#fff" fontSize={8} fontFamily="system-ui" opacity={0.8}>
+          {targetLabel}
+        </text>
+      )}
+
+      <text x={targetLabel ? 4 : 0} y={0} textAnchor="middle" dominantBaseline="central"
+        fill="#fff" fontSize={8.5} fontFamily="system-ui">
+        {truncated}
+      </text>
+    </g>
+  );
+}
+
 // ── Main avatar with anime.js animations ─────────────────────
 
 export function AgentAvatar({ agent }: { agent: AgentState }) {
@@ -154,6 +199,9 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
     const collab = s.collaborations.get(agent.collaborationId);
     return collab?.status === 'active' ? collab.color : null;
   });
+
+  // Access agents map for speech bubble target lookup
+  const agents = useAgentStore((s) => s.agents);
 
   // Refs for animated elements
   const groupRef = useRef<SVGGElement>(null);
@@ -189,9 +237,19 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
   }, [targetX, targetY]);
 
   // ── Bobbing / breathing: smooth sine wave ──
+  // Walking agents get enhanced bob (+2px amplitude per PRD Section 5.2)
   useEffect(() => {
     if (!bobRef.current) return;
-    if (isWorking) {
+    if (agent.isMoving) {
+      // Walking bob: larger amplitude, faster rhythm
+      const anim = animate(bobRef.current, {
+        translateY: ['0px', '-7px', '0px', '5px', '0px'],
+        ease: 'inOutSine',
+        duration: 800,
+        loop: true,
+      });
+      return () => { anim.pause(); };
+    } else if (isWorking) {
       const anim = animate(bobRef.current, {
         translateY: ['0px', '-5px', '0px', '3px', '0px'],
         ease: 'inOutSine',
@@ -208,7 +266,7 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
       });
       return () => { anim.pause(); };
     }
-  }, [isWorking, isActive]);
+  }, [isWorking, isActive, agent.isMoving]);
 
   // ── Pulse glow: smooth expansion ──
   useEffect(() => {
@@ -228,6 +286,7 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
   }, [isWorking]);
 
   // ── Ground shadow: breathes with bobbing ──
+  // Walking agents have more dramatic shadow compression (PRD 5.2)
   useEffect(() => {
     if (!shadowRef.current) return;
     if (!isActive) {
@@ -235,7 +294,16 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
       return;
     }
     shadowRef.current.setAttribute('opacity', '0.12');
-    if (isWorking) {
+    if (agent.isMoving) {
+      const anim = animate(shadowRef.current, {
+        rx: [R - 4, R + 5, R - 4],
+        opacity: [0.15, 0.05, 0.15],
+        ease: 'inOutSine',
+        duration: 800,
+        loop: true,
+      });
+      return () => { anim.pause(); };
+    } else if (isWorking) {
       const anim = animate(shadowRef.current, {
         rx: [R - 2, R + 3, R - 2],
         opacity: [0.12, 0.06, 0.12],
@@ -245,7 +313,7 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
       });
       return () => { anim.pause(); };
     }
-  }, [isWorking, isActive]);
+  }, [isWorking, isActive, agent.isMoving]);
 
   // ── Thinking dots: staggered spring bounce ──
   useEffect(() => {
@@ -507,18 +575,15 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
           </text>
         </g>
 
-        {/* Speech bubble */}
+        {/* Speech bubble with directional indicator (PRD Section 4.4) */}
         <g ref={speechRef} opacity={0}>
           {agent.speechBubble && agent.status === 'SPEAKING' && (
-            <g transform="translate(0, -46)">
-              <rect x={-65} y={-11} width={130} height={20} rx={10}
-                fill="rgba(110, 85, 160, 0.88)" />
-              <polygon points="-4,9 4,9 0,16" fill="rgba(110, 85, 160, 0.88)" />
-              <text x={0} y={0} textAnchor="middle" dominantBaseline="central"
-                fill="#fff" fontSize={8.5} fontFamily="system-ui">
-                {agent.speechBubble.length > 28 ? agent.speechBubble.slice(0, 26) + '\u2026' : agent.speechBubble}
-              </text>
-            </g>
+            <SpeechBubble
+              text={agent.speechBubble}
+              targetAgentId={agent.speechTarget}
+              agents={agents}
+              collabColor={collabColor}
+            />
           )}
         </g>
       </g>

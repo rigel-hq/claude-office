@@ -16,14 +16,14 @@ export function CommandCenter() {
       <TopBar />
 
       {/* Main area: office floor + sidebar */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Office floor — fills remaining space */}
-        <div className="flex-1 overflow-hidden bg-rigel-bg">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Office floor — fills remaining space, scrollable */}
+        <div className="flex-1 min-h-0 overflow-auto bg-rigel-bg">
           <OfficeFloor />
         </div>
 
         {/* Right sidebar (metrics, agents, events) */}
-        <div className="w-[340px] flex-shrink-0">
+        <div className="w-[340px] flex-shrink-0 min-h-0">
           <Sidebar onOpenTerminal={openTerminal} />
         </div>
       </div>

@@ -46,11 +46,24 @@ export interface AgentState {
   mvpActive: boolean;
   position: { x: number; y: number };
   homePosition: { x: number; y: number };
+  isMoving: boolean;
   currentTool: string | null;
   speechBubble: string | null;
+  speechTarget: string | null;  // who this agent is speaking to (for directional bubbles)
   speechTimeout: ReturnType<typeof setTimeout> | null;
   collaborationId: string | null;
 }
+
+/**
+ * Line visual state derived from participant agent statuses.
+ * See ADR Section 4.3 for the full state table.
+ */
+export type LineState =
+  | 'initiating'  // Agents walking to meeting point (dotted, low opacity)
+  | 'active'      // Agents talking (solid, color, particles flowing)
+  | 'thinking'    // One agent processing (dashed, pulsing opacity)
+  | 'error'       // Agent hit an error (red, dashed)
+  | 'fading';     // Wrapping up (fade out over 600ms)
 
 export interface ActiveCollaboration {
   id: string;
@@ -157,8 +170,10 @@ export const useAgentStore = create<AgentStore>()(
             mvpActive: role.mvpActive,
             position: { ...pos },
             homePosition: { ...pos },
+            isMoving: false,
             currentTool: null,
             speechBubble: null,
+            speechTarget: null,
             speechTimeout: null,
             collaborationId: null,
           });
@@ -221,6 +236,26 @@ export const useAgentStore = create<AgentStore>()(
         switch (data.phase) {
           case 'start': {
             const participants = data.participants ?? [];
+
+            // EC-1: If a collaboration already exists between the same participants,
+            // skip creating a duplicate — the existing line will pulse instead.
+            const existingPair = participants.length === 2
+              ? [...state.collaborations.values()].find(
+                  (c) =>
+                    c.status === 'active' &&
+                    c.participants.length === 2 &&
+                    c.participants.includes(participants[0]) &&
+                    c.participants.includes(participants[1]),
+                )
+              : undefined;
+
+            if (existingPair) {
+              // Update the existing collaboration's topic with the new task
+              existingPair.topic = (data.topic as string) ?? existingPair.topic;
+              existingPair.activeSpeaker = data.initiatedBy ?? existingPair.activeSpeaker;
+              break;
+            }
+
             const collab: ActiveCollaboration = {
               id: data.collaborationId,
               type: data.type ?? 'parallel',
@@ -271,6 +306,12 @@ export const useAgentStore = create<AgentStore>()(
             const collab = state.collaborations.get(data.collaborationId);
             if (collab) {
               collab.activeSpeaker = data.fromAgent ?? event.agentId;
+
+              // Track speech target for directional speech bubbles
+              const speaker = state.agents.get(data.fromAgent ?? event.agentId);
+              if (speaker && data.toAgent && data.toAgent !== '*') {
+                speaker.speechTarget = data.toAgent;
+              }
             }
             break;
           }
@@ -289,6 +330,7 @@ export const useAgentStore = create<AgentStore>()(
               if (a) {
                 a.position = { x: a.homePosition.x, y: a.homePosition.y };
                 a.collaborationId = null;
+                a.speechTarget = null;
               }
             }
 
@@ -317,13 +359,35 @@ export const useAgentStore = create<AgentStore>()(
         if (!agent) return;
 
         agent.position = { x: data.toX, y: data.toY };
+        agent.isMoving = true;
       });
+
+      // Clear isMoving after spring animation completes (~1.2s)
+      setTimeout(() => {
+        set((state) => {
+          const agent = state.agents.get(event.agentId);
+          if (agent) agent.isMoving = false;
+        });
+      }, 1200);
     },
 
     // ── Snapshot handler for page refresh mid-collaboration ──
+    // The backend returns Collaboration[] (shared type) which we must map
+    // to ActiveCollaboration[] (frontend type with color, status, etc.)
     handleCollaborationSnapshot: (collabs: ActiveCollaboration[]) => {
       set((state) => {
-        for (const collab of collabs) {
+        for (const raw of collabs) {
+          // Map backend Collaboration shape to frontend ActiveCollaboration
+          const collab: ActiveCollaboration = {
+            id: raw.id,
+            type: (raw as unknown as Record<string, unknown>).type as ActiveCollaboration['type'] ?? 'parallel',
+            participants: raw.participants ?? [],
+            topic: raw.topic ?? '',
+            color: raw.color ?? nextCollabColor(),
+            activeSpeaker: raw.activeSpeaker ?? null,
+            startedAt: raw.startedAt ?? Date.now(),
+            status: raw.status ?? 'active',
+          };
           state.collaborations.set(collab.id, collab);
           for (const pid of collab.participants) {
             const a = state.agents.get(pid);

@@ -4,6 +4,7 @@ import { AGENT_ROLE_MAP } from '@rigelhq/shared';
 import type { GatewayAdapter, AgentHandle, SpawnOptions, SessionInfo } from '../adapters/adapter.js';
 import type { EventBus } from './event-bus.js';
 import type { CollaborationManager } from './collaboration-manager.js';
+import { agentConfigLoader } from './agent-config-loader.js';
 
 interface ActiveAgent {
   handle: AgentHandle;
@@ -12,6 +13,20 @@ interface ActiveAgent {
   lastActivity: number;
   /** The runId of the current query — used to discard stale events from prior runs */
   currentRunId: string | null;
+}
+
+/** Tracks a specialist spawned by CEA's [DELEGATE:] marker */
+interface PendingDelegation {
+  delegatedBy: string;
+  task: string;
+  output: string[];
+}
+
+/** Tracks a specialist spawned by another agent's [CONSULT:] marker */
+interface PendingConsultation {
+  requestedBy: string;
+  question: string;
+  output: string[];
 }
 
 export class AgentManager {
@@ -33,6 +48,10 @@ export class AgentManager {
   private completedSubagents = new Set<string>();
   /** Optional collaboration manager for detecting inter-agent collaboration */
   private collaborationManager: CollaborationManager | null = null;
+  /** Track delegations: specialist configId → who delegated and accumulated output */
+  private pendingDelegations = new Map<string, PendingDelegation>();
+  /** Track consultations: consulted agent configId → who requested and accumulated output */
+  private pendingConsultations = new Map<string, PendingConsultation>();
 
   constructor(
     readonly adapter: GatewayAdapter,
@@ -310,6 +329,36 @@ export class AgentManager {
       }
     }
 
+    // --- Async delegation: detect [DELEGATE:] markers in CEA's assistant text ---
+    if (configId === 'cea' && !isSubagentEvent && event.stream === 'assistant' && event.data.text) {
+      try {
+        await this.parseDelegationMarkers(event.data.text as string);
+      } catch (err) {
+        console.error(`[AgentMgr] Delegation parsing error:`, err);
+      }
+    }
+
+    // --- Consultation: detect [CONSULT:] markers in any specialist's assistant text ---
+    if (configId !== 'cea' && !isSubagentEvent && event.stream === 'assistant' && event.data.text) {
+      try {
+        await this.parseConsultationMarkers(configId, event.data.text as string);
+      } catch (err) {
+        console.error(`[AgentMgr] Consultation parsing error for ${configId}:`, err);
+      }
+    }
+
+    // --- Accumulate output for delegated/consulted specialists ---
+    if (!isSubagentEvent && event.stream === 'assistant' && event.data.text) {
+      const delegation = this.pendingDelegations.get(configId);
+      if (delegation) {
+        delegation.output.push(event.data.text as string);
+      }
+      const consultation = this.pendingConsultations.get(configId);
+      if (consultation) {
+        consultation.output.push(event.data.text as string);
+      }
+    }
+
     // Handle lifecycle end — mark IDLE but keep session alive
     // Skip during steering (interrupt + immediate re-send)
     // Only trigger for the parent agent's lifecycle end, not subagent lifecycle ends
@@ -340,6 +389,50 @@ export class AgentManager {
 
   private async onAgentComplete(configId: string): Promise<void> {
     const agent = this.active.get(configId);
+
+    // --- Delegation result callback: send specialist output back to the delegating agent ---
+    const delegation = this.pendingDelegations.get(configId);
+    if (delegation) {
+      this.pendingDelegations.delete(configId);
+      const output = delegation.output.join('\n').slice(0, 10000);
+      const resultMsg = `[SPECIALIST RESULT: ${configId}]\nTask: ${delegation.task}\n\nResult:\n${output || '(no output produced)'}`;
+
+      // Notify CollaborationManager that delegation ended
+      if (this.collaborationManager) {
+        try {
+          await this.collaborationManager.onSpecialistComplete(configId);
+        } catch (err) {
+          console.warn(`[AgentMgr] CollabMgr onSpecialistComplete error:`, err);
+        }
+      }
+
+      // Send result back to delegator (fire-and-forget to avoid blocking)
+      console.log(`[AgentMgr] Delegation complete: ${configId} → ${delegation.delegatedBy} (${output.length} chars)`);
+      this.sendMessage(delegation.delegatedBy, resultMsg).catch(err =>
+        console.error(`[AgentMgr] Failed to send delegation result to ${delegation.delegatedBy}:`, err),
+      );
+    }
+
+    // --- Consultation result callback: send answer back to the requesting agent ---
+    const consultation = this.pendingConsultations.get(configId);
+    if (consultation) {
+      this.pendingConsultations.delete(configId);
+      const output = consultation.output.join('\n').slice(0, 5000);
+      const consultResult = `[CONSULTATION RESULT from ${configId}]\nQuestion: ${consultation.question}\n\nAnswer:\n${output || '(no answer produced)'}`;
+
+      if (this.collaborationManager) {
+        try {
+          await this.collaborationManager.onSpecialistComplete(configId);
+        } catch (err) {
+          console.warn(`[AgentMgr] CollabMgr onSpecialistComplete error:`, err);
+        }
+      }
+
+      console.log(`[AgentMgr] Consultation complete: ${configId} → ${consultation.requestedBy} (${output.length} chars)`);
+      this.sendMessage(consultation.requestedBy, consultResult).catch(err =>
+        console.error(`[AgentMgr] Failed to send consultation result to ${consultation.requestedBy}:`, err),
+      );
+    }
 
     // Transition all tracked subagents to IDLE as a safety net.
     // If a subagent already received its own lifecycle:end, this is a harmless no-op
@@ -481,6 +574,127 @@ export class AgentManager {
     await this.processQueue();
   }
 
+  // ── Async delegation: CEA → specialist spawning ──────────────
+
+  /** Parse [DELEGATE:agent-id] markers from CEA's text and spawn specialists */
+  private async parseDelegationMarkers(text: string): Promise<void> {
+    const delegateRegex = /\[DELEGATE:([a-z0-9-]+)\]\s*(.*)/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = delegateRegex.exec(text)) !== null) {
+      const targetAgentId = match[1];
+      const task = match[2]?.trim() ?? '';
+
+      if (!AGENT_ROLE_MAP.has(targetAgentId)) {
+        console.warn(`[AgentMgr] Unknown delegation target: ${targetAgentId}`);
+        continue;
+      }
+      if (targetAgentId === 'cea') {
+        console.warn(`[AgentMgr] CEA cannot delegate to itself`);
+        continue;
+      }
+
+      console.log(`[AgentMgr] CEA delegating to ${targetAgentId}: ${task.slice(0, 80)}`);
+      await this.handleDelegation(targetAgentId, task);
+    }
+  }
+
+  /** Spawn or message a specialist for a delegated task */
+  private async handleDelegation(targetAgentId: string, task: string): Promise<void> {
+    try {
+      // Track this delegation
+      this.pendingDelegations.set(targetAgentId, {
+        delegatedBy: 'cea',
+        task,
+        output: [],
+      });
+
+      // Notify CollaborationManager for visual effects (lines, movement)
+      if (this.collaborationManager) {
+        await this.collaborationManager.onDelegation('cea', targetAgentId, task);
+      }
+
+      // Spawn or resume the specialist
+      if (this.hasActiveSession(targetAgentId)) {
+        await this.sendMessage(targetAgentId, task);
+      } else {
+        const systemPrompt = agentConfigLoader.generateSystemPrompt(targetAgentId);
+        const tools = agentConfigLoader.getAllowedTools(targetAgentId).filter(t => t !== 'Agent');
+        await this.spawnAgent(targetAgentId, systemPrompt, task, {
+          allowedTools: tools,
+          settingSources: ['user', 'project'],
+        });
+      }
+    } catch (err) {
+      console.error(`[AgentMgr] Failed to handle delegation to ${targetAgentId}:`, err);
+      this.pendingDelegations.delete(targetAgentId);
+    }
+  }
+
+  // ── Peer consultation: specialist → specialist spawning ─────
+
+  /** Parse [CONSULT:agent-id] markers and spawn consulted agents */
+  private async parseConsultationMarkers(fromAgentId: string, text: string): Promise<void> {
+    const consultRegex = /\[CONSULT:([a-z0-9-]+)\]\s*(.*)/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = consultRegex.exec(text)) !== null) {
+      const targetAgentId = match[1];
+      const question = match[2]?.trim() ?? '';
+
+      if (!AGENT_ROLE_MAP.has(targetAgentId)) {
+        console.warn(`[AgentMgr] Unknown consultation target: ${targetAgentId}`);
+        continue;
+      }
+      if (targetAgentId === fromAgentId) {
+        console.warn(`[AgentMgr] ${fromAgentId} cannot consult itself`);
+        continue;
+      }
+
+      // Don't interrupt busy agents — skip if target is active and not idle
+      const targetAgent = this.active.get(targetAgentId);
+      if (targetAgent && targetAgent.status !== 'IDLE') {
+        console.log(`[AgentMgr] ${targetAgentId} is busy (${targetAgent.status}), skipping consultation from ${fromAgentId}`);
+        continue;
+      }
+
+      console.log(`[AgentMgr] ${fromAgentId} consulting ${targetAgentId}: ${question.slice(0, 80)}`);
+      await this.handleConsultation(fromAgentId, targetAgentId, question);
+    }
+  }
+
+  /** Spawn or message a specialist for a consultation */
+  private async handleConsultation(fromAgentId: string, targetAgentId: string, question: string): Promise<void> {
+    try {
+      this.pendingConsultations.set(targetAgentId, {
+        requestedBy: fromAgentId,
+        question,
+        output: [],
+      });
+
+      const consultMsg = `[Consultation from ${fromAgentId}]: ${question}`;
+
+      // Notify CollaborationManager for visual effects
+      if (this.collaborationManager) {
+        await this.collaborationManager.onDelegation(fromAgentId, targetAgentId, question);
+      }
+
+      if (this.hasActiveSession(targetAgentId)) {
+        await this.sendMessage(targetAgentId, consultMsg);
+      } else {
+        const systemPrompt = agentConfigLoader.generateSystemPrompt(targetAgentId);
+        const tools = agentConfigLoader.getAllowedTools(targetAgentId).filter(t => t !== 'Agent');
+        await this.spawnAgent(targetAgentId, systemPrompt, consultMsg, {
+          allowedTools: tools,
+          settingSources: ['user', 'project'],
+        });
+      }
+    } catch (err) {
+      console.error(`[AgentMgr] Failed to handle consultation ${fromAgentId} → ${targetAgentId}:`, err);
+      this.pendingConsultations.delete(targetAgentId);
+    }
+  }
+
   async stopAll(): Promise<void> {
     for (const timer of this.idleTimers.values()) {
       clearTimeout(timer);
@@ -500,5 +714,7 @@ export class AgentManager {
     this.queue = [];
     this.parentSubagents.clear();
     this.completedSubagents.clear();
+    this.pendingDelegations.clear();
+    this.pendingConsultations.clear();
   }
 }

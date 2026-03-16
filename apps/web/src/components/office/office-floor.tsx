@@ -234,9 +234,9 @@ export function OfficeFloor() {
       <ZoneLabel x={CX + CW + 14} y={CY + CW + 24} label="Ops Center" color="#b07a40" />
 
       {/* ─── Layer 6: Furniture ─── */}
-      {/* Desks at each agent position (skip CEA — has special suite) */}
+      {/* Desks at each agent's HOME position (desks stay fixed even when agents walk) */}
       {agentList.filter((a) => a.zone !== 'ceo-suite').map((agent) => (
-        <DeskUnit key={`desk-${agent.configId}`} x={agent.position.x} y={agent.position.y} />
+        <DeskUnit key={`desk-${agent.configId}`} x={agent.homePosition.x} y={agent.homePosition.y} />
       ))}
       {/* CEA executive desk in suite */}
       <DeskUnit x={600} y={-40} />

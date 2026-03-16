@@ -548,6 +548,56 @@ export class CollaborationManager {
     return `${initiatorMeta?.name ?? initiator} delegating to ${participantMeta?.name ?? participant}`;
   }
 
+  // ── Public API for async delegation / consultation ──────────
+
+  /**
+   * Called by AgentManager when CEA delegates to a specialist via [DELEGATE:]
+   * or when a specialist consults another via [CONSULT:].
+   * Creates the visual collaboration (line + movement) between the two agents.
+   */
+  async onDelegation(delegatorId: string, specialistId: string, task: string): Promise<void> {
+    // Check for existing collaboration between these two
+    const existing = this.findCollaborationBetween(delegatorId, specialistId);
+    if (existing) {
+      existing.topic = task.slice(0, 80);
+      return;
+    }
+
+    const collab: Collaboration = {
+      id: randomUUID(),
+      type: 'consultation',
+      initiator: delegatorId,
+      participants: [delegatorId, specialistId],
+      topic: task.slice(0, 80) || `${delegatorId} → ${specialistId}`,
+      startedAt: Date.now(),
+      endedAt: null,
+      parentRunId: 'delegation',
+      messages: [],
+    };
+
+    if (this.collaborations.size >= MAX_COLLABORATIONS) {
+      const oldest = [...this.collaborations.values()].sort((a, b) => a.startedAt - b.startedAt)[0];
+      if (oldest) await this.endCollaboration(oldest.id);
+    }
+
+    this.collaborations.set(collab.id, collab);
+    this.trackAgentCollaboration(delegatorId, collab.id);
+    this.trackAgentCollaboration(specialistId, collab.id);
+
+    await this.emitCollaborationStart(collab, specialistId);
+    await this.emitMovementToMeetingPoint(collab);
+
+    console.log(`[CollabMgr] Delegation collaboration: ${delegatorId} → ${specialistId}: ${task.slice(0, 60)}`);
+  }
+
+  /**
+   * Called by AgentManager when a delegated/consulted specialist completes.
+   * Ends the visual collaboration and returns agents to their desks.
+   */
+  async onSpecialistComplete(specialistId: string): Promise<void> {
+    await this.onSubagentEnd(specialistId);
+  }
+
   /** Get active collaborations (for snapshot on client connect) */
   getActiveCollaborations(): Collaboration[] {
     return [...this.collaborations.values()].filter(c => !c.endedAt);

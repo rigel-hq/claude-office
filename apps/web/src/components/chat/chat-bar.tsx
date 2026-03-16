@@ -178,58 +178,56 @@ export function ChatBar({ onSend, onSummarize }: ChatBarProps) {
     : `Message ${selectedMeta?.name ?? selectedAgent}...`;
 
   return (
-    <div className="relative">
-      {/* Messages panel — slides up from bottom */}
+    <div className="flex flex-col flex-shrink-0 max-h-[50vh]">
+      {/* Messages panel — inline above input, scrolls within its own container */}
       {panelOpen && messages.length > 0 && (
-        <div className="absolute bottom-full left-0 right-0 mb-0">
-          <div className="mx-4 mb-1 bg-rigel-surface/95 backdrop-blur-sm border border-rigel-border rounded-t-xl shadow-2xl max-h-[300px] flex flex-col overflow-hidden">
-            {/* Panel header */}
-            <div className="flex items-center justify-between px-3 py-1.5 border-b border-rigel-border flex-shrink-0">
-              <span className="text-[10px] text-rigel-muted uppercase tracking-wider font-semibold">
-                Messages ({messages.length})
-              </span>
-              <button
-                onClick={() => setPanelOpen(false)}
-                className="text-rigel-muted hover:text-rigel-text text-xs px-1"
-              >
-                &times;
-              </button>
-            </div>
+        <div className="flex-1 min-h-0 bg-rigel-surface/95 backdrop-blur-sm border-t border-rigel-border flex flex-col overflow-hidden">
+          {/* Panel header */}
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-rigel-border flex-shrink-0">
+            <span className="text-[10px] text-rigel-muted uppercase tracking-wider font-semibold">
+              Messages ({messages.length})
+            </span>
+            <button
+              onClick={() => setPanelOpen(false)}
+              className="text-rigel-muted hover:text-rigel-text text-xs px-1"
+            >
+              &times;
+            </button>
+          </div>
 
-            {/* Messages */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex gap-2 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  {msg.sender === 'agent' && msg.agentId && (
-                    <div className="flex-shrink-0 mt-0.5">
-                      <SidebarAvatar agentId={msg.agentId} size={20} />
-                    </div>
-                  )}
-                  <div className="max-w-[70%]">
-                    {msg.sender === 'agent' && msg.agentName && (
-                      <span className="text-[10px] text-purple-400/70 font-medium block">{msg.agentName}</span>
-                    )}
-                    <div
-                      className={`px-2.5 py-1.5 rounded-lg text-xs ${
-                        msg.sender === 'user'
-                          ? 'bg-rigel-blue text-white rounded-br-sm'
-                          : msg.sender === 'system'
-                            ? 'bg-rigel-border/50 text-rigel-muted'
-                            : 'bg-rigel-bg text-rigel-text border border-rigel-border rounded-bl-sm'
-                      }`}
-                    >
-                      {msg.sender === 'user' ? msg.content : <MarkdownMessage content={msg.content} />}
-                    </div>
-                    <span className="text-[9px] text-rigel-muted mt-0.5 block">
-                      {formatTime(msg.timestamp)}
-                    </span>
+          {/* Messages */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex gap-2 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                {msg.sender === 'agent' && msg.agentId && (
+                  <div className="flex-shrink-0 mt-0.5">
+                    <SidebarAvatar agentId={msg.agentId} size={20} />
                   </div>
+                )}
+                <div className="max-w-[70%]">
+                  {msg.sender === 'agent' && msg.agentName && (
+                    <span className="text-[10px] text-purple-400/70 font-medium block">{msg.agentName}</span>
+                  )}
+                  <div
+                    className={`px-2.5 py-1.5 rounded-lg text-xs ${
+                      msg.sender === 'user'
+                        ? 'bg-rigel-blue text-white rounded-br-sm'
+                        : msg.sender === 'system'
+                          ? 'bg-rigel-border/50 text-rigel-muted'
+                          : 'bg-rigel-bg text-rigel-text border border-rigel-border rounded-bl-sm'
+                    }`}
+                  >
+                    {msg.sender === 'user' ? msg.content : <MarkdownMessage content={msg.content} />}
+                  </div>
+                  <span className="text-[9px] text-rigel-muted mt-0.5 block">
+                    {formatTime(msg.timestamp)}
+                  </span>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

@@ -3,29 +3,56 @@ import type { AgentManager } from './agent-manager.js';
 import type { TaskManager } from './task-manager.js';
 import type { EventBus } from './event-bus.js';
 import type { AgentHandle } from '../adapters/adapter.js';
-import type { SubagentDef } from '../adapters/adapter.js';
 import { AGENT_ROLES, AGENT_CONFIGS } from '@rigelhq/shared';
-import { agentConfigLoader } from './agent-config-loader.js';
 
 const CEA_CONFIG_ID = 'cea';
 const SUMMARIZER_CONFIG_ID = 'tts-summarizer';
 
 // Build a rich system prompt from the CEA config + full agent roster
-const ceaConfig = AGENT_CONFIGS.find(c => c.id === 'cea');
 const CEA_SYSTEM_PROMPT = `You are the Chief Executive Agent (CEA) of RigelHQ.
 
-You are a pure orchestrator. You have exactly ONE tool: **Agent**.
-You do nothing except delegate tasks to specialist agents and summarize their results to the user.
+You are a pure orchestrator. You delegate tasks to specialist agents using text markers, and summarize their results to the user.
 
 ## How You Work
 
 1. User gives you a task
-2. You pick the right specialist(s) from the list below
-3. You call the **Agent** tool with \`subagent_type\` set to the specialist name
-4. The specialist does all the work (reading files, writing code, running commands, etc.)
-5. You summarize what the specialist did and report back to the user
+2. You analyze the task and pick the right specialist(s) from the list below
+3. You output [DELEGATE:agent-id] markers for each specialist (see syntax below)
+4. You respond to the user immediately, confirming the delegation — do NOT wait for results
+5. The orchestrator spawns the specialists independently in the background
+6. When a specialist completes, you receive a [SPECIALIST RESULT] message
+7. You summarize the result and report back to the user
 
-That is ALL you do. You never read files, write code, run commands, or use any tool other than Agent.
+You are ALWAYS available for new tasks. Delegations run in the background and do not block you.
+
+## Delegation Syntax
+
+To delegate a task, include this exact marker in your response:
+
+[DELEGATE:agent-id] Clear task description for the specialist
+
+Examples:
+[DELEGATE:frontend-engineer] Fix the header component styling in apps/web/src/components/Header.tsx
+[DELEGATE:backend-engineer] Add a new /api/users endpoint with pagination support
+[DELEGATE:devops-engineer] Set up CI pipeline for automated testing on push
+
+Multiple delegations in one response (for multi-domain tasks):
+[DELEGATE:frontend-engineer] Build the login page UI
+[DELEGATE:backend-engineer] Create the authentication API endpoints
+
+IMPORTANT: After writing your [DELEGATE:] markers, immediately respond to the user confirming what you've delegated and to whom. Do NOT say you are waiting or that you'll get back to them. You are always available.
+
+## Receiving Specialist Results
+
+When a specialist finishes their work, you will receive a message formatted as:
+
+[SPECIALIST RESULT: agent-id]
+Task: <what they were asked to do>
+
+Result:
+<their output>
+
+When you receive a specialist result, summarize it concisely for the user. Focus on what was accomplished.
 
 ## Your Specialists
 
@@ -52,10 +79,10 @@ ${AGENT_ROLES.filter(r => r.id !== 'cea').map(r => {
 
 ## Rules
 
-- You ONLY use the Agent tool. No other tool. Ever.
-- For multi-part tasks, delegate to multiple specialists in parallel.
-- Keep your responses short. Summarize what the specialist reported — don't add filler.
-- If a specialist fails, try a different specialist or re-delegate with clearer instructions.
+- You have NO tools. Your only output is text and [DELEGATE:] markers.
+- For multi-part tasks, delegate to multiple specialists using multiple markers.
+- Keep your responses short. When summarizing specialist results, focus on what was done.
+- If a specialist fails, re-delegate with clearer instructions or try a different specialist.
 - You CANNOT enable or disable agents. Agents activate automatically when you delegate to them.
 - If asked to "enable" an agent, simply delegate a task to that agent — it will appear active in the UI.
 - NEVER ask any specialist to restart, stop, or kill the orchestrator process. This requires manual intervention.
@@ -65,29 +92,6 @@ ${AGENT_ROLES.filter(r => r.id !== 'cea').map(r => {
 Your messages may include a **[System: Active Claude sessions]** section at the bottom.
 When users ask about sessions, read that data and present it. Do not delegate session listing.
 `;
-
-
-/** Build subagent definitions for all specialist agents */
-function buildSubagentDefs(): Record<string, SubagentDef> {
-  const defs: Record<string, SubagentDef> = {};
-
-  for (const role of AGENT_ROLES) {
-    if (role.id === 'cea') continue; // CEA is the orchestrator, not a subagent
-
-    const cfg = AGENT_CONFIGS.find(c => c.id === role.id);
-    if (!cfg) continue;
-
-    defs[role.id] = {
-      description: `${role.name} — ${role.role}. ${cfg.collaboration?.triggers?.join(', ') ?? ''}`,
-      prompt: agentConfigLoader.generateSystemPrompt(role.id),
-      tools: cfg.capabilities.tools.filter(t => t !== 'Agent'), // Subagents don't get Agent tool
-    };
-  }
-
-  return defs;
-}
-
-const SUBAGENT_DEFS = buildSubagentDefs();
 
 const SUMMARIZER_SYSTEM_PROMPT = `You are a TTS summarizer for a voice assistant interface.
 When given text, you produce a 1-2 sentence spoken-friendly summary.
@@ -119,17 +123,15 @@ export class CEAManager {
   }
 
   async start(): Promise<void> {
-    console.log('[CEA] Starting Chief Executive Agent...');
-    console.log(`[CEA] ${Object.keys(SUBAGENT_DEFS).length} specialist agents registered as subagents`);
+    console.log('[CEA] Starting Chief Executive Agent (async delegation mode)...');
 
     this.handle = await this.agentManager.spawnAgent(
       CEA_CONFIG_ID,
       CEA_SYSTEM_PROMPT,
       'You are now active. Acknowledge briefly and wait for user instructions.',
       {
-        agents: SUBAGENT_DEFS,
-        // CEA only gets Agent — it is a pure delegator, nothing else
-        allowedTools: ['Agent'],
+        // CEA has NO tools — it delegates via text [DELEGATE:] markers only
+        allowedTools: [],
         settingSources: ['user', 'project'],
       },
     );
@@ -229,8 +231,7 @@ export class CEAManager {
         CEA_SYSTEM_PROMPT,
         enrichedContent,
         {
-          agents: SUBAGENT_DEFS,
-          allowedTools: ['Agent'],
+          allowedTools: [],
           settingSources: ['user', 'project'],
         },
       );
