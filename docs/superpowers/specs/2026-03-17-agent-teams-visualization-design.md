@@ -594,6 +594,18 @@ async function main() {
 | `session:create` | `{ projectName }` | User clicks "New Session" |
 | `session:stop` | `{ sessionId }` | User stops a session |
 
+## Preconditions — Validation Spike (Step 0)
+
+Before implementation begins, build a minimal test script that:
+
+1. **Validates SDK `agents` parameter**: Call `query()` with a single agent definition and verify it appears as a usable subagent type. Confirm that `AgentDefinition` fields (`description`, `prompt`, `tools`) work as documented.
+2. **Validates `agentProgressSummaries`**: Enable it and confirm `task_progress` messages include the `summary` field.
+3. **Validates hook events**: With `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` set, trigger agent activity and log every hook event that fires. Confirm which of `SubagentStart`, `SubagentStop`, `TeammateIdle`, `TaskCompleted` actually exist.
+4. **Validates Agent Teams mailbox**: Confirm that teammates can communicate directly (not just through the team lead).
+5. **Documents actual event shapes**: Log every SDK message type received and every hook payload. Record the actual JSON structure.
+
+If hook events `SubagentStart`/`SubagentStop` do not exist, baby agent visualization falls back to SDK `task_started`/`task_notification` events (which still provide task IDs and descriptions). If `TeammateIdle` does not exist, we rely on `task_notification` with `status: 'completed'` to detect idle state.
+
 ## Implementation Notes
 
 ### Environment Variable
@@ -603,13 +615,86 @@ async function main() {
 ### Agent ID Resolution
 
 SDK task events contain `description` and `task_id` but not a direct `configId`. We resolve the agent identity by:
-1. Matching the `subagent_type` from the Agent tool call that started the task
-2. Tracking `tool_use_id` → `task_id` mapping when the Agent tool is called
-3. Falling back to keyword matching in task `description` against known agent names
+1. **Primary**: Matching the `subagent_type` from the Agent tool call that started the task. When the team lead calls `Agent({ subagent_type: 'frontend-engineer' })`, we capture the `tool_use_id` and map it to the subsequent `task_started.task_id`.
+2. **Secondary**: Tracking `tool_use_id` → `task_id` mapping. The `task_started` message includes `tool_use_id` which links back to the Agent tool call.
+3. **Fallback**: Keyword matching in task `description` against the 21 known agent IDs. This is fragile — log every case where resolution falls through to this step for monitoring.
+
+**Risk**: If Claude Code changes the format of task descriptions or Agent tool input schema, this mapping may break silently. The validation spike (Step 0) should document the exact format and we should add integration tests.
+
+### Concurrent Message Handling
+
+If a user sends a new message while a previous query is still streaming (specialists mid-task):
+1. Abort the current parent query via `AbortController`
+2. Wait for the iterator to settle (max 3s timeout)
+3. Start a new query with `resume: sessionId`
+4. Active specialist tasks continue running in Agent Teams — only the parent query stream is interrupted
+
+This mirrors the existing interrupt/steer pattern in the current `claude-adapter.ts`.
+
+### CEA Agent Role Migration
+
+The `cea` config ID in `AGENT_ROLES` is repurposed as the **Team Lead** avatar:
+- Kept in `AGENT_ROLES` for the UI (fixed position in CEO Suite, always present)
+- NOT included in the `agents` parameter passed to `query()` — it represents the main session itself
+- Rename display: `name: 'Team Lead'` (or keep 'Chief Executive Agent' for continuity)
+
+### Session Lifecycle
+
+- **Max concurrent sessions**: Configurable via `RIGELHQ_MAX_SESSIONS` (default: 5). Each session is a Claude Code process consuming API credits.
+- **Idle timeout**: Sessions idle for 30 minutes are hibernated (process stopped, session ID preserved for resume).
+- **Cleanup**: Sessions stopped for > 7 days are archived in DB. Claude Code's own session files in `~/.claude/projects/` are not managed by us.
+- **Backend restart**: Rediscover sessions via `listSessions()` SDK call and reconcile with DB. Sessions are resumed on next user message, not eagerly.
 
 ### Session Persistence
 
 Sessions are persisted by Claude Code itself (in `~/.claude/projects/`). Our DB stores only metadata (session ID, project name, status). On backend restart, we can rediscover sessions via `listSessions()` SDK call and reconcile.
+
+### Agent Movement
+
+Agent movement animations (walking to collaboration zones) from the previous architecture are **removed** in favor of static desk positions with communication lines drawn between them. The `AgentPosition` type is simplified to fixed coordinates only. Movement added visual richness but is not needed when communication lines already show who is talking to whom.
+
+### Model Strategy
+
+All agents use the default model initially (inherits from the team lead session). Per-agent model overrides are supported via the `model` field in `AgentDefinition` for future optimization (e.g., haiku for simple lookup tasks, opus for complex architecture decisions). This is a tuning lever, not a launch requirement.
+
+### Color Palette Overflow
+
+The 8-color palette (teal, amber, rose, violet, lime, cyan, pink, green) cycles when more than 8 tasks are active simultaneously. To maintain visual clarity with reused colors, communication lines also vary by pattern: solid (1st use), dashed (2nd use), dotted (3rd use).
+
+### WebSocket Backpressure
+
+With 21+ agents potentially active, events are batched in 100ms windows before pushing to WebSocket clients. Priority ordering:
+- **High** (send immediately): `agent:status`, `communication:start/end`, `baby-agent:spawn/remove`
+- **Normal** (batched): `chat:stream`, `agent:tool`, `agent:speech`
+- **Low** (debounced, max 1/sec per agent): `agent:tool` repeated calls for the same agent
+
+### File System Watching
+
+File watching (`~/.claude/teams/`, `~/.claude/tasks/`) is **optional and best-effort**. The system must function correctly with only SDK events + hooks. If the watched paths do not exist, log a warning and disable the watcher gracefully. File watching serves as backup enrichment, not a primary data source.
+
+### Shared Types Changes
+
+The existing `EventStream` type (`'lifecycle' | 'tool' | 'assistant' | 'error' | 'collaboration' | 'movement'`) is extended:
+
+```typescript
+type EventStream =
+  | 'lifecycle' | 'tool' | 'assistant' | 'error'       // existing
+  | 'collaboration' | 'movement'                         // existing (movement deprecated)
+  | 'session'                                             // new: session lifecycle
+  | 'baby-agent'                                          // new: sub-sub-agent lifecycle
+  | 'communication'                                       // replaces collaboration for line events
+```
+
+New event interfaces are added in `packages/shared/src/types/events.ts` for session events, baby agent events, and communication line events.
+
+### Migration Steps
+
+1. **Prisma migration**: Drop `pid`, `startedAt` from Agent model. Add `sessionId`, `taskId`, `parentAgentId`. Add new `Session` model with `SessionStatus` enum.
+2. **Shared types**: Update `Agent` type to remove `pid`/`startedAt`, add new fields. Update `EventStream` union. Add new event interfaces.
+3. **Adapter**: Rewrite `adapter.ts` interface and `claude-adapter.ts` implementation to the simplified session-based API.
+4. **Backend services**: Remove `cea-manager.ts`, simplify `agent-manager.ts` into `session-gateway.ts`, add `hook-receiver.ts`, `file-watcher.ts`, `agent-definition-builder.ts`.
+5. **Frontend**: Add `BabyAgentState` to store, add session switcher component, add baby avatar component, update communication lines, update socket event handlers.
+6. **Hooks**: Set up `~/.claude/hooks/notify-rigelhq.sh` and configure in `~/.claude/settings.json`.
 
 ### Mock Mode
 
@@ -617,6 +702,7 @@ For development without real Claude sessions, keep a mock adapter that simulates
 - Team lead assistant messages
 - Fake task_started/progress/notification events
 - Simulated specialist activity with realistic timing
+- Baby agent spawn/stop events
 - This powers the "living office" demo mode
 
 ### Error Handling
@@ -625,3 +711,4 @@ For development without real Claude sessions, keep a mock adapter that simulates
 - If hook POST fails, Claude Code continues unaffected (hooks are fire-and-forget)
 - If file watcher misses events, SDK stream is the source of truth
 - On WebSocket reconnect, send full state snapshot (sessions + agent statuses)
+- If agent ID resolution fails (all 3 steps), attribute the event to an "unknown-agent" placeholder and log for debugging
