@@ -36,7 +36,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
   // Note: Claude Agent SDK uses Claude Code auth (CLI login), not an API key
   RIGELHQ_ADAPTER: z.enum(['claude', 'mock']).default('mock'),
-  RIGELHQ_MAX_CONCURRENT_AGENTS: z.coerce.number().default(5),
+  RIGELHQ_MAX_CONCURRENT_AGENTS: z.coerce.number().default(10),
   RIGELHQ_TOKEN_BUDGET_DAILY: z.coerce.number().default(1_000_000),
   RIGELHQ_ORCHESTRATOR_PORT: z.coerce.number().default(4000),
 });

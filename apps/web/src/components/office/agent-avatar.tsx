@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { animate, stagger, spring } from 'animejs';
 import { generateAvatar, type AvatarData } from '@/lib/avatar-generator';
 import type { AgentState } from '@/store/agent-store';
@@ -319,6 +319,68 @@ export function AgentAvatar({ agent }: { agent: AgentState }) {
     });
     return () => { anim.pause(); };
   }, [agent.status]);
+
+  // ── Idle micro-animations: ambient life when IDLE for >10s ──
+  const idleAnimTarget = bobRef; // animate the bob group for subtle movement
+  const triggerIdleMicroAnimation = useCallback(() => {
+    if (!idleAnimTarget.current) return;
+    // Randomly pick one of three micro-animations
+    const choice = Math.floor(Math.random() * 3);
+    switch (choice) {
+      case 0:
+        // Option A: Slight X position jitter (±3px) over 800ms
+        animate(idleAnimTarget.current, {
+          translateX: ['0px', `${Math.random() > 0.5 ? 3 : -3}px`, '0px'],
+          ease: spring({ stiffness: 120, damping: 18 }),
+          duration: 800,
+        });
+        break;
+      case 1:
+        // Option B: Scale pulse (1.0 → 1.03 → 1.0) over 600ms
+        animate(idleAnimTarget.current, {
+          scale: [1, 1.03, 1],
+          ease: 'inOutSine',
+          duration: 600,
+        });
+        break;
+      case 2:
+        // Option C: Slight Y shift (±2px) like a stretch
+        animate(idleAnimTarget.current, {
+          translateY: ['0px', `${Math.random() > 0.5 ? 2 : -2}px`, '0px'],
+          ease: spring({ stiffness: 120, damping: 18 }),
+          duration: 800,
+        });
+        break;
+    }
+  }, [idleAnimTarget]);
+
+  useEffect(() => {
+    if (agent.status !== 'IDLE') return;
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      // Random interval between 8-15 seconds, staggering across agents
+      const delay = 8000 + Math.random() * 7000;
+      timeoutId = setTimeout(() => {
+        if (cancelled) return;
+        // Respect document.hidden — don't animate when the tab is hidden
+        if (!document.hidden) {
+          triggerIdleMicroAnimation();
+        }
+        scheduleNext();
+      }, delay);
+    };
+
+    scheduleNext();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [agent.status, triggerIdleMicroAnimation]);
 
   return (
     <g

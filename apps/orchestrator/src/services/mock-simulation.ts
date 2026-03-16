@@ -42,6 +42,11 @@ const MOCK_TASKS: Record<string, string[]> = {
     'Investigating memory leak in worker processes',
     'Setting up distributed tracing with OpenTelemetry',
   ],
+  'technical-architect': [
+    'Evaluating microservices vs monolith trade-offs for new service',
+    'Drafting architecture decision record for event-driven messaging',
+    'Reviewing API contract design for backward compatibility',
+  ],
 };
 
 const DEFAULT_TASKS = [

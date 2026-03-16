@@ -12,7 +12,7 @@ describe('MockAdapter', () => {
   it('spawns an agent and emits lifecycle events', async () => {
     adapter = new MockAdapter();
     const events: AgentEvent[] = [];
-    const handle = await adapter.spawn('backend-engineer', 'You are a backend engineer', 'Build an API', (e) => events.push(e));
+    const handle = await adapter.spawn('backend-engineer', 'You are a backend engineer', 'Build an API', (e) => { events.push(e); });
 
     expect(handle.configId).toBe('backend-engineer');
     expect(handle.pid).toBeNull();
@@ -29,7 +29,7 @@ describe('MockAdapter', () => {
   it('stops an agent and emits end event', async () => {
     adapter = new MockAdapter();
     const events: AgentEvent[] = [];
-    const handle = await adapter.spawn('frontend-engineer', 'prompt', 'task', (e) => events.push(e));
+    const handle = await adapter.spawn('frontend-engineer', 'prompt', 'task', (e) => { events.push(e); });
 
     await handle.stop();
 
@@ -41,7 +41,7 @@ describe('MockAdapter', () => {
   it('emits full event sequence over time', async () => {
     adapter = new MockAdapter();
     const events: AgentEvent[] = [];
-    await adapter.spawn('qa-tester', 'prompt', 'task', (e) => events.push(e));
+    await adapter.spawn('qa-tester', 'prompt', 'task', (e) => { events.push(e); });
 
     // Wait for the full sequence (4s + buffer)
     await vi.waitFor(() => expect(events.length).toBeGreaterThanOrEqual(5), { timeout: 6000 });

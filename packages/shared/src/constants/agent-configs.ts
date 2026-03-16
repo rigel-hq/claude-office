@@ -1511,7 +1511,7 @@ export const AGENT_CONFIGS: AgentConfig[] = [
     icon: '🏛️',
     role: 'Solutions Architect',
     seniority: 'Principal',
-    status: 'standby',
+    status: 'always_active',
     persona: {
       background:
         '18 years in software architecture spanning monoliths, SOA, and microservices. Designed systems processing $1B+ in annual transactions. Expert in distributed systems, event-driven architecture, and domain-driven design. Former Chief Architect who led the technical strategy for a 1000-engineer organization.',

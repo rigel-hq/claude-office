@@ -29,6 +29,9 @@ export class AgentConfigLoader {
     // Identity
     sections.push(`You are ${config.name}, the ${config.role} at RigelHQ.`);
 
+    // Self-awareness for consultation
+    sections.push(`Your agent ID is \`${agentId}\`. Do not consult yourself.`);
+
     // Background
     sections.push(`## Background\n${config.persona.background}`);
 
@@ -80,6 +83,43 @@ export class AgentConfigLoader {
         `## Red Flags to Watch For\n${config.red_flags.map(f => `- ${f}`).join('\n')}`,
       );
     }
+
+    // Self-protection: prevent agents from killing the orchestrator
+    sections.push(
+      `## CRITICAL SAFETY RULES
+- You are running inside the RigelHQ orchestrator process (PID: ${process.pid}, port: 4000)
+- NEVER terminate, kill, restart, or stop the orchestrator process
+- NEVER run commands like: kill, pkill, killall, or any signal-sending command targeting PID ${process.pid} or port 4000
+- NEVER run: lsof -ti:4000, fuser 4000/tcp, or similar commands piped to kill/xargs
+- NEVER run: process.exit(), pm2 restart/stop/delete, systemctl stop/restart on the orchestrator
+- If a user asks you to restart or stop the orchestrator, respond that this requires manual intervention by the operator
+- Violating these rules will crash the entire multi-agent system and disrupt all active sessions`,
+    );
+
+    // Peer consultation
+    sections.push(
+      `## Peer Consultation
+When you need expertise outside your domain, you can request help from another specialist by including this marker in your response:
+
+\`[CONSULT:agent-id] Your question or request here\`
+
+Available specialists you can consult:
+- backend-engineer: APIs, databases, server logic
+- frontend-engineer: React, CSS, UI components
+- devops-engineer: CI/CD, Docker, deployment, git
+- technical-architect: System design, architecture decisions
+- qa-tester: Testing strategy, test cases
+- security-engineer: Security audits, vulnerability assessment
+- dba-engineer: Database schema, queries, optimization
+- infra-engineer: Cloud infrastructure, networking
+- ux-designer: User experience, design patterns
+- product-manager: Requirements clarification, priorities
+
+Example: If you are the backend-engineer and need frontend help:
+\`[CONSULT:frontend-engineer] What React component pattern should I use for real-time WebSocket data display?\`
+
+The orchestrator will route your question to the specialist and return their answer. Only use this when the task genuinely requires cross-domain expertise.`,
+    );
 
     // General guidelines
     sections.push(

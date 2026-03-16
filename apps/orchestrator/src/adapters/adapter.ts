@@ -24,7 +24,7 @@ export interface AgentHandle {
   stop(): Promise<void>;
 }
 
-export type AgentEventCallback = (event: AgentEvent) => void;
+export type AgentEventCallback = (event: AgentEvent) => void | Promise<void>;
 
 /** Subagent definition passed to the SDK's agents option */
 export interface SubagentDef {

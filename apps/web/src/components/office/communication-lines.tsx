@@ -95,6 +95,7 @@ function PathParticles({
 /**
  * A single communication line between two agents,
  * including the path stroke and animated particles.
+ * Includes an invisible wider hit-area and an SVG <title> tooltip.
  */
 function CollaborationLine({
   from,
@@ -102,12 +103,14 @@ function CollaborationLine({
   color,
   status,
   index,
+  tooltip,
 }: {
   from: Point;
   to: Point;
   color: string;
   status: 'active' | 'fading';
   index: number;
+  tooltip: string;
 }) {
   const isFading = status === 'fading';
 
@@ -124,6 +127,18 @@ function CollaborationLine({
         transition: 'opacity 600ms ease-out',
       }}
     >
+      <title>{tooltip}</title>
+
+      {/* Invisible wider hit-area for easier hover targeting */}
+      <path
+        d={d}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={12}
+        strokeLinecap="round"
+        style={{ cursor: 'pointer' }}
+      />
+
       {/* Main path */}
       <path
         d={d}
@@ -135,6 +150,7 @@ function CollaborationLine({
         strokeDasharray={isFading ? undefined : '8 4'}
         style={{
           filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.15))',
+          pointerEvents: 'none',
         }}
       >
         {/* Animated dash offset for flowing effect */}
@@ -205,12 +221,25 @@ export function CommunicationLines() {
       color: string;
       status: 'active' | 'fading';
       index: number;
+      tooltip: string;
     }> = [];
 
     let lineIndex = 0;
 
     collaborations.forEach((collab: ActiveCollaboration) => {
       const parts = collab.participants;
+
+      // Build tooltip: "{initiator} → {participants}: {topic}"
+      const initiatorAgent = agents.get(parts[0]) as AgentState | undefined;
+      const initiatorName = initiatorAgent?.name ?? parts[0];
+      const otherNames = parts
+        .slice(1)
+        .map((pid) => {
+          const a = agents.get(pid) as AgentState | undefined;
+          return a?.name ?? pid;
+        })
+        .join(', ');
+      const tooltip = `${initiatorName} \u2192 ${otherNames}: ${collab.topic || 'collaboration'}`;
 
       if (parts.length === 2) {
         // Direct line between the two agents
@@ -224,6 +253,7 @@ export function CommunicationLines() {
             color: collab.status === 'fading' ? collab.color : collab.color,
             status: collab.status,
             index: lineIndex++,
+            tooltip,
           });
         }
       } else if (parts.length >= 3) {
@@ -241,6 +271,7 @@ export function CommunicationLines() {
             color: collab.color,
             status: collab.status,
             index: lineIndex++,
+            tooltip,
           });
         }
       }
@@ -295,6 +326,7 @@ export function CommunicationLines() {
           color={line.color}
           status={line.status}
           index={line.index}
+          tooltip={line.tooltip}
         />
       ))}
     </g>

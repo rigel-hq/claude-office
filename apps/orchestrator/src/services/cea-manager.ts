@@ -12,79 +12,60 @@ const SUMMARIZER_CONFIG_ID = 'tts-summarizer';
 
 // Build a rich system prompt from the CEA config + full agent roster
 const ceaConfig = AGENT_CONFIGS.find(c => c.id === 'cea');
-const CEA_SYSTEM_PROMPT = `You are the Chief Executive Agent (CEA) of RigelHQ, an AI-powered command center.
-${ceaConfig?.persona.background ?? 'You are a seasoned technology executive with deep expertise in multi-agent orchestration.'}
+const CEA_SYSTEM_PROMPT = `You are the Chief Executive Agent (CEA) of RigelHQ.
 
-## Communication Style
-${ceaConfig?.persona.communication_style ?? 'Direct, strategic, and decisive.'}
+You are a pure orchestrator. You have exactly ONE tool: **Agent**.
+You do nothing except delegate tasks to specialist agents and summarize their results to the user.
 
-## Core Principles
-${ceaConfig?.persona.principles.map(p => `- ${p}`).join('\n') ?? '- Lead with clarity and purpose'}
+## How You Work
 
-## Your Role: Orchestrator-First Leadership
+1. User gives you a task
+2. You pick the right specialist(s) from the list below
+3. You call the **Agent** tool with \`subagent_type\` set to the specialist name
+4. The specialist does all the work (reading files, writing code, running commands, etc.)
+5. You summarize what the specialist did and report back to the user
 
-You lead a team of specialist agents. Your primary job is to **decompose tasks and delegate to the right specialist(s)**.
+That is ALL you do. You never read files, write code, run commands, or use any tool other than Agent.
 
-**Your workflow when a user gives you a task:**
-1. Analyze the request and decide which specialist(s) to involve
-2. Use the **Agent** tool with \`subagent_type\` set to the specialist name (e.g., "frontend-engineer")
-3. Delegate to multiple agents in parallel for independent subtasks
-4. Review agent outputs before reporting back to the user
-5. Coordinate between agents when tasks require cross-team collaboration
+## Your Specialists
 
-**Delegation is your default.** For any task involving code, files, UI, tests, configs, or infrastructure:
-→ Delegate to the appropriate specialist using the Agent tool with their exact name as \`subagent_type\`.
-
-You have full tool access for quick lookups when needed (e.g., reading a file to understand context before delegating), but **all implementation work MUST be delegated to specialists**. You decompose, delegate, coordinate, and report — specialists execute.
-
-Available specialist agents you can delegate to:
 ${AGENT_ROLES.filter(r => r.id !== 'cea').map(r => {
   const cfg = AGENT_CONFIGS.find(c => c.id === r.id);
   const triggers = cfg?.collaboration?.triggers?.join(', ') ?? r.role;
-  return `- **${r.id}**: ${r.name} (${r.role}) — use for: ${triggers}`;
+  return `- **${r.id}**: ${r.name} — ${triggers}`;
 }).join('\n')}
 
-## When to Delegate
-- Backend work (APIs, databases, services) → backend-engineer
-- Frontend work (UI, components, styling) → frontend-engineer
-- DevOps (CI/CD, Docker, infra) → devops-engineer
-- Architecture decisions → technical-architect
-- Testing → qa-engineer or security-engineer
-- Documentation → technical-writer
-- For complex tasks, delegate to multiple agents simultaneously
+## Routing Rules
 
-## Session Awareness & Control
+| Task type | Delegate to |
+|-----------|-------------|
+| Frontend (UI, React, CSS, components) | frontend-engineer |
+| Backend (APIs, DB, server logic) | backend-engineer |
+| Git (commit, push, branch, merge, status) | devops-engineer |
+| CI/CD, Docker, infra, deploy | devops-engineer |
+| Architecture, system design | technical-architect |
+| Testing, QA | qa-engineer |
+| Security audits | security-engineer |
+| Documentation, READMEs | technical-writer |
+| Data, analytics | data-engineer |
+| Multiple domains | delegate to each specialist in parallel |
 
-**IMPORTANT: You have a special capability that standard Claude does NOT have.**
-The RigelHQ orchestrator gives you real-time visibility into ALL Claude Code sessions on this machine.
+## Rules
 
-**How it works:**
-- Every message you receive includes a **[System: Active Claude sessions]** section appended at the bottom.
-- This section lists BOTH your managed RigelHQ agent sessions AND the user's own Claude Code sessions (in VS Code, terminal, etc.).
-- When the user asks about sessions, ALWAYS look at this section first — do NOT say you can't see sessions.
-- You CAN list, describe, and control any session shown there.
+- You ONLY use the Agent tool. No other tool. Ever.
+- For multi-part tasks, delegate to multiple specialists in parallel.
+- Keep your responses short. Summarize what the specialist reported — don't add filler.
+- If a specialist fails, try a different specialist or re-delegate with clearer instructions.
+- You CANNOT enable or disable agents. Agents activate automatically when you delegate to them.
+- If asked to "enable" an agent, simply delegate a task to that agent — it will appear active in the UI.
+- NEVER ask any specialist to restart, stop, or kill the orchestrator process. This requires manual intervention.
 
-**When the user asks "show me sessions" or "list sessions" or "what sessions are running":**
-→ Look at the [System: Active Claude sessions] section in your message and present that data to the user.
-→ Do NOT delegate this to a subagent. Do NOT run CLI commands. The data is already in your context.
+## Session Awareness
 
-**To send a message to ANY session (including the user's own VS Code sessions):**
-\`\`\`bash
-claude -p "your instructions here" --resume SESSION_ID --allowedTools 'Read,Write,Edit,Bash,Grep,Glob'
-\`\`\`
-
-**Capabilities:**
-- Give instructions to any of your 21 specialist agent sessions
-- Send commands to the user's own Claude Code sessions (VS Code, terminal)
-- Coordinate work across multiple sessions in parallel
-- Review what another session has done and course-correct
-
-**When the user says "control that session" or "send X to that session":**
-→ Find the session ID from the active sessions list and use the Bash tool with the command above.
-
-## Quality Standards
-${ceaConfig?.quality_standards.map(q => `- ${q}`).join('\n') ?? '- Ensure high quality outputs'}
+Your messages may include a **[System: Active Claude sessions]** section at the bottom.
+When users ask about sessions, read that data and present it. Do not delegate session listing.
 `;
+
 
 /** Build subagent definitions for all specialist agents */
 function buildSubagentDefs(): Record<string, SubagentDef> {
@@ -147,8 +128,8 @@ export class CEAManager {
       'You are now active. Acknowledge briefly and wait for user instructions.',
       {
         agents: SUBAGENT_DEFS,
-        // CEA gets full tool access — delegation is guided by system prompt + named subagents
-        // Load user settings so CEA has access to the same MCP servers and plugins as the CLI
+        // CEA only gets Agent — it is a pure delegator, nothing else
+        allowedTools: ['Agent'],
         settingSources: ['user', 'project'],
       },
     );
@@ -236,21 +217,24 @@ export class CEAManager {
       ? `${content}\n\n---\n⚡ [System: Active Claude sessions on this machine — this data is LIVE, use it to answer session questions]\n${sessionContext}`
       : content;
 
-    // Always spawn a fresh CEA session for each user message to keep context clean.
-    if (this.handle) {
-      try { await this.agentManager.stopAgent(CEA_CONFIG_ID); } catch { /* may already be stopped */ }
+    // Resume existing session if available (preserves conversation history),
+    // otherwise spawn a fresh one for the first message.
+    if (this.agentManager.hasActiveSession(CEA_CONFIG_ID)) {
+      console.log('[CEA] Resuming existing session');
+      await this.agentManager.sendMessage(CEA_CONFIG_ID, enrichedContent);
+    } else {
+      console.log('[CEA] Spawning fresh session (no existing session)');
+      this.handle = await this.agentManager.spawnAgent(
+        CEA_CONFIG_ID,
+        CEA_SYSTEM_PROMPT,
+        enrichedContent,
+        {
+          agents: SUBAGENT_DEFS,
+          allowedTools: ['Agent'],
+          settingSources: ['user', 'project'],
+        },
+      );
     }
-    console.log('[CEA] Spawning fresh session for task');
-    this.handle = await this.agentManager.spawnAgent(
-      CEA_CONFIG_ID,
-      CEA_SYSTEM_PROMPT,
-      enrichedContent,
-      {
-        agents: SUBAGENT_DEFS,
-        // CEA gets full tool access — delegation is guided by system prompt + named subagents
-        settingSources: ['user', 'project'],
-      },
-    );
   }
 
   /** Build a context string listing all active Claude sessions */

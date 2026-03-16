@@ -5,9 +5,9 @@ import { generateRunId, generateEventId } from '@rigelhq/shared';
 import type { GatewayAdapter, AgentHandle, AgentEventCallback, SpawnOptions, SessionInfo } from './adapter.js';
 
 export class ClaudeAdapter implements GatewayAdapter {
-  private handles = new Map<string, { abort: AbortController; configId: string }>();
+  private handles = new Map<string, { abort: AbortController; configId: string; runId: string }>();
   /** Track active query completions so we can wait for them to settle after abort */
-  private activeQueries = new Map<string, { abort: AbortController; done: Promise<void>; resolve: () => void }>();
+  private activeQueries = new Map<string, { abort: AbortController; done: Promise<void>; resolve: () => void; runId: string }>();
   /** Configs currently being interrupted — suppresses error events */
   private interrupting = new Set<string>();
   /** Track which named subagent is currently active for a parent configId (for event attribution) */
@@ -25,9 +25,9 @@ export class ClaudeAdapter implements GatewayAdapter {
     let seq = 0;
     let sessionId: string | null = null;
 
-    const emit = (stream: EventStream, data: AgentEvent['data'], agentId?: string) => {
+    const emit = async (stream: EventStream, data: AgentEvent['data'], agentId?: string) => {
       seq += 1;
-      onEvent({
+      await onEvent({
         id: generateEventId(),
         agentId: agentId ?? configId,
         runId,
@@ -38,7 +38,7 @@ export class ClaudeAdapter implements GatewayAdapter {
       });
     };
 
-    this.handles.set(configId, { abort: abortController, configId });
+    this.handles.set(configId, { abort: abortController, configId, runId });
 
     // Spawn Claude Agent SDK query — all agents get full tool access
     const defaultTools = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Agent'];
@@ -75,10 +75,10 @@ export class ClaudeAdapter implements GatewayAdapter {
     // Process events in background, tracked for interrupt support
     let queryResolve: () => void;
     const queryDone = new Promise<void>((r) => { queryResolve = r; });
-    this.activeQueries.set(configId, { abort: abortController, done: queryDone, resolve: queryResolve! });
+    this.activeQueries.set(configId, { abort: abortController, done: queryDone, resolve: queryResolve!, runId });
 
     (async () => {
-      emit('lifecycle', { phase: 'start' });
+      await emit('lifecycle', { phase: 'start' });
       try {
         for await (const message of iter) {
           // Capture session ID from init message
@@ -103,36 +103,38 @@ export class ClaudeAdapter implements GatewayAdapter {
               const taskDesc = (raw.description as string) ?? '';
               const subAgentId = this.activeSubagent.get(configId) ?? extractAgentId(taskDesc);
               console.log(`[Claude] Subagent started for ${configId}: ${subAgentId} — "${taskDesc.slice(0, 60)}"`);
-              emit('lifecycle', { phase: 'start' }, subAgentId);
-              emit('assistant', { text: `[${subAgentId}] Working on: ${taskDesc}` }, subAgentId);
+              await emit('lifecycle', { phase: 'start' }, subAgentId);
+              await emit('assistant', { text: `[${subAgentId}] Working on: ${taskDesc}` }, subAgentId);
             } else if (subtype === 'task_progress') {
               const subAgentId = this.activeSubagent.get(configId) ?? extractAgentId(raw.description as string);
               const lastTool = raw.last_tool_name as string | undefined;
               if (lastTool) {
-                emit('tool', { tool: lastTool, phase: 'start' }, subAgentId);
-                emit('tool', { tool: lastTool, phase: 'end' }, subAgentId);
+                await emit('tool', { tool: lastTool, phase: 'start' }, subAgentId);
+                await emit('tool', { tool: lastTool, phase: 'end' }, subAgentId);
               }
-              emit('lifecycle', { phase: 'thinking' }, subAgentId);
+              await emit('lifecycle', { phase: 'thinking' }, subAgentId);
             } else if (subtype === 'task_notification') {
               const status = raw.status as string;
               const summary = (raw.summary as string) ?? '';
               const subAgentId = this.activeSubagent.get(configId) ?? extractAgentId(summary);
               if (summary) {
-                emit('assistant', { text: summary }, subAgentId);
+                await emit('assistant', { text: summary }, subAgentId);
               }
               if (status === 'failed') {
-                emit('error', { error: `Subagent task failed` }, subAgentId);
+                await emit('error', { error: `Subagent task failed` }, subAgentId);
               }
-              emit('lifecycle', { phase: 'end' }, subAgentId);
+              await emit('lifecycle', { phase: 'end' }, subAgentId);
               console.log(`[Claude] Subagent completed for ${configId}: ${subAgentId} (${status})`);
               this.activeSubagent.delete(configId);
             }
           } else if (message.type === 'assistant') {
             const assistantMsg = message as SDKAssistantMessage;
-            emit('lifecycle', { phase: 'thinking' });
+            // If a specialist subagent is active, attribute tool calls to it
+            const activeSpecialist = this.activeSubagent.get(configId) ?? null;
+            await emit('lifecycle', { phase: 'thinking' }, activeSpecialist ?? undefined);
             for (const block of assistantMsg.message.content) {
               if (block.type === 'text') {
-                emit('assistant', { text: block.text });
+                await emit('assistant', { text: block.text }, activeSpecialist ?? undefined);
               } else if (block.type === 'tool_use') {
                 // Track which named subagent the CEA is delegating to
                 if (block.name === 'Agent') {
@@ -146,10 +148,13 @@ export class ClaudeAdapter implements GatewayAdapter {
                     console.log(`[Claude] ${configId} delegating to generic agent: "${desc}"`);
                   }
                 } else {
-                  console.log(`[Claude] ${configId} calling tool: ${block.name}`);
+                  // Attribute to the active specialist if one is running
+                  const toolOwner = this.activeSubagent.get(configId) ?? configId;
+                  console.log(`[Claude] ${toolOwner} calling tool: ${block.name}`);
                 }
-                emit('tool', { tool: block.name, phase: 'start', toolArgs: block.input as Record<string, unknown> });
-                emit('tool', { tool: block.name, phase: 'end' });
+                const toolAgent = this.activeSubagent.get(configId) ?? undefined;
+                await emit('tool', { tool: block.name, phase: 'start', toolArgs: block.input as Record<string, unknown> }, toolAgent);
+                await emit('tool', { tool: block.name, phase: 'end' }, toolAgent);
               }
             }
           } else if (message.type === 'result') {
@@ -157,22 +162,28 @@ export class ClaudeAdapter implements GatewayAdapter {
             if (resultMsg.subtype !== 'success') {
               // Suppress error if this was an intentional interrupt (steering)
               if (!this.interrupting.has(configId)) {
-                emit('error', { error: `Agent run ended: ${resultMsg.subtype}` });
+                await emit('error', { error: `Agent run ended: ${resultMsg.subtype}` });
               }
             }
-            emit('lifecycle', { phase: 'end' });
+            await emit('lifecycle', { phase: 'end' });
           }
         }
       } catch (err) {
         // Suppress error events for intentional interrupts
         if (!this.interrupting.has(configId)) {
           const errorMsg = err instanceof Error ? err.message : String(err);
-          emit('error', { error: errorMsg });
+          await emit('error', { error: errorMsg });
         }
-        emit('lifecycle', { phase: 'end' });
+        await emit('lifecycle', { phase: 'end' });
       } finally {
-        this.handles.delete(configId);
-        this.activeQueries.delete(configId);
+        // Only clean up our own entries — a newer spawn for the same configId
+        // may have already replaced them, and deleting would orphan the new query.
+        if (this.handles.get(configId)?.runId === runId) {
+          this.handles.delete(configId);
+        }
+        if (this.activeQueries.get(configId)?.runId === runId) {
+          this.activeQueries.delete(configId);
+        }
         queryResolve!();
       }
     })();
@@ -221,9 +232,9 @@ export class ClaudeAdapter implements GatewayAdapter {
     const abortController = new AbortController();
     let seq = 0;
 
-    const emit = (stream: EventStream, data: AgentEvent['data'], agentId?: string) => {
+    const emit = async (stream: EventStream, data: AgentEvent['data'], agentId?: string) => {
       seq += 1;
-      onEvent({
+      await onEvent({
         id: generateEventId(),
         agentId: agentId ?? handle.configId,
         runId,
@@ -234,12 +245,12 @@ export class ClaudeAdapter implements GatewayAdapter {
       });
     };
 
-    this.handles.set(handle.configId, { abort: abortController, configId: handle.configId });
+    this.handles.set(handle.configId, { abort: abortController, configId: handle.configId, runId });
 
     // Track this query for future interrupt support
     let queryResolve: () => void;
     const queryDone = new Promise<void>((r) => { queryResolve = r; });
-    this.activeQueries.set(handle.configId, { abort: abortController, done: queryDone, resolve: queryResolve! });
+    this.activeQueries.set(handle.configId, { abort: abortController, done: queryDone, resolve: queryResolve!, runId });
 
     const defaultTools = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Agent'];
     const resumeTools = handle.allowedTools ?? defaultTools;
@@ -255,7 +266,7 @@ export class ClaudeAdapter implements GatewayAdapter {
       },
     });
 
-    emit('lifecycle', { phase: 'start' });
+    await emit('lifecycle', { phase: 'start' });
     try {
       for await (const msg of iter) {
         if (msg.type === 'system') {
@@ -276,32 +287,33 @@ export class ClaudeAdapter implements GatewayAdapter {
             const taskDesc = (raw.description as string) ?? '';
             const subAgentId = this.activeSubagent.get(handle.configId) ?? extractAgentId(taskDesc);
             console.log(`[Claude] Subagent started for ${handle.configId}: ${subAgentId} — "${taskDesc.slice(0, 60)}"`);
-            emit('lifecycle', { phase: 'start' }, subAgentId);
-            emit('assistant', { text: `[${subAgentId}] Working on: ${taskDesc}` }, subAgentId);
+            await emit('lifecycle', { phase: 'start' }, subAgentId);
+            await emit('assistant', { text: `[${subAgentId}] Working on: ${taskDesc}` }, subAgentId);
           } else if (subtype === 'task_progress') {
             const subAgentId = this.activeSubagent.get(handle.configId) ?? extractAgentId(raw.description as string);
             const lastTool = raw.last_tool_name as string | undefined;
             if (lastTool) {
-              emit('tool', { tool: lastTool, phase: 'start' }, subAgentId);
-              emit('tool', { tool: lastTool, phase: 'end' }, subAgentId);
+              await emit('tool', { tool: lastTool, phase: 'start' }, subAgentId);
+              await emit('tool', { tool: lastTool, phase: 'end' }, subAgentId);
             }
-            emit('lifecycle', { phase: 'thinking' }, subAgentId);
+            await emit('lifecycle', { phase: 'thinking' }, subAgentId);
           } else if (subtype === 'task_notification') {
             const status = raw.status as string;
             const summary = (raw.summary as string) ?? '';
             const subAgentId = this.activeSubagent.get(handle.configId) ?? extractAgentId(summary);
-            if (summary) emit('assistant', { text: summary }, subAgentId);
-            if (status === 'failed') emit('error', { error: 'Subagent task failed' }, subAgentId);
-            emit('lifecycle', { phase: 'end' }, subAgentId);
+            if (summary) await emit('assistant', { text: summary }, subAgentId);
+            if (status === 'failed') await emit('error', { error: 'Subagent task failed' }, subAgentId);
+            await emit('lifecycle', { phase: 'end' }, subAgentId);
             console.log(`[Claude] Subagent completed for ${handle.configId}: ${subAgentId} (${status})`);
             this.activeSubagent.delete(handle.configId);
           }
         } else if (msg.type === 'assistant') {
           const assistantMsg = msg as SDKAssistantMessage;
-          emit('lifecycle', { phase: 'thinking' });
+          const activeSpecialist = this.activeSubagent.get(handle.configId) ?? null;
+          await emit('lifecycle', { phase: 'thinking' }, activeSpecialist ?? undefined);
           for (const block of assistantMsg.message.content) {
             if (block.type === 'text') {
-              emit('assistant', { text: block.text });
+              await emit('assistant', { text: block.text }, activeSpecialist ?? undefined);
             } else if (block.type === 'tool_use') {
               // Track which named subagent the CEA is delegating to
               if (block.name === 'Agent') {
@@ -315,10 +327,12 @@ export class ClaudeAdapter implements GatewayAdapter {
                   console.log(`[Claude] ${handle.configId} delegating to generic agent: "${desc}"`);
                 }
               } else {
-                console.log(`[Claude] ${handle.configId} (resume) calling tool: ${block.name}`);
+                const toolOwner = this.activeSubagent.get(handle.configId) ?? handle.configId;
+                console.log(`[Claude] ${toolOwner} (resume) calling tool: ${block.name}`);
               }
-              emit('tool', { tool: block.name, phase: 'start', toolArgs: block.input as Record<string, unknown> });
-              emit('tool', { tool: block.name, phase: 'end' });
+              const toolAgent = this.activeSubagent.get(handle.configId) ?? undefined;
+              await emit('tool', { tool: block.name, phase: 'start', toolArgs: block.input as Record<string, unknown> }, toolAgent);
+              await emit('tool', { tool: block.name, phase: 'end' }, toolAgent);
             }
           }
         } else if (msg.type === 'result') {
@@ -326,22 +340,27 @@ export class ClaudeAdapter implements GatewayAdapter {
           if (resultMsg.subtype !== 'success') {
             // Suppress error if this was an intentional interrupt (steering)
             if (!this.interrupting.has(handle.configId)) {
-              emit('error', { error: `Agent run ended: ${resultMsg.subtype}` });
+              await emit('error', { error: `Agent run ended: ${resultMsg.subtype}` });
             }
           }
-          emit('lifecycle', { phase: 'end' });
+          await emit('lifecycle', { phase: 'end' });
         }
       }
     } catch (err) {
       // Suppress error events for intentional interrupts
       if (!this.interrupting.has(handle.configId)) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        emit('error', { error: errorMsg });
+        await emit('error', { error: errorMsg });
       }
-      emit('lifecycle', { phase: 'end' });
+      await emit('lifecycle', { phase: 'end' });
     } finally {
-      this.handles.delete(handle.configId);
-      this.activeQueries.delete(handle.configId);
+      // Only clean up our own entries — guard against race with a newer query
+      if (this.handles.get(handle.configId)?.runId === runId) {
+        this.handles.delete(handle.configId);
+      }
+      if (this.activeQueries.get(handle.configId)?.runId === runId) {
+        this.activeQueries.delete(handle.configId);
+      }
       queryResolve!();
     }
   }
@@ -355,9 +374,9 @@ export class ClaudeAdapter implements GatewayAdapter {
     const abortController = new AbortController();
     let seq = 0;
 
-    const emit = (stream: EventStream, data: AgentEvent['data']) => {
+    const emit = async (stream: EventStream, data: AgentEvent['data']) => {
       seq += 1;
-      onEvent({
+      await onEvent({
         id: generateEventId(),
         agentId: `session-${sessionId.slice(0, 8)}`,
         runId,
@@ -379,31 +398,31 @@ export class ClaudeAdapter implements GatewayAdapter {
       },
     });
 
-    emit('lifecycle', { phase: 'start' });
+    await emit('lifecycle', { phase: 'start' });
     try {
       for await (const msg of iter) {
         if (msg.type === 'assistant') {
           const assistantMsg = msg as SDKAssistantMessage;
           for (const block of assistantMsg.message.content) {
             if (block.type === 'text') {
-              emit('assistant', { text: block.text });
+              await emit('assistant', { text: block.text });
             } else if (block.type === 'tool_use') {
-              emit('tool', { tool: block.name, phase: 'start', toolArgs: block.input as Record<string, unknown> });
-              emit('tool', { tool: block.name, phase: 'end' });
+              await emit('tool', { tool: block.name, phase: 'start', toolArgs: block.input as Record<string, unknown> });
+              await emit('tool', { tool: block.name, phase: 'end' });
             }
           }
         } else if (msg.type === 'result') {
           const resultMsg = msg as SDKResultMessage;
           if (resultMsg.subtype !== 'success') {
-            emit('error', { error: `Session run ended: ${resultMsg.subtype}` });
+            await emit('error', { error: `Session run ended: ${resultMsg.subtype}` });
           }
         }
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      emit('error', { error: errorMsg });
+      await emit('error', { error: errorMsg });
     }
-    emit('lifecycle', { phase: 'end' });
+    await emit('lifecycle', { phase: 'end' });
   }
 
   async listSessions(): Promise<SessionInfo[]> {
