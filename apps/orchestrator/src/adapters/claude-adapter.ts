@@ -10,6 +10,8 @@ export class ClaudeAdapter implements GatewayAdapter {
   private activeQueries = new Map<string, { abort: AbortController; done: Promise<void>; resolve: () => void; runId: string }>();
   /** Configs currently being interrupted — suppresses error events */
   private interrupting = new Set<string>();
+  /** Map tool_use_id → subagent_type from Agent tool calls, so task events can be attributed */
+  private toolUseToAgent = new Map<string, string>();
 
   async createSession(
     configId: string,
@@ -46,6 +48,7 @@ export class ClaudeAdapter implements GatewayAdapter {
         agentProgressSummaries: options?.agentProgressSummaries ?? true,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
+        ...(options?.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
         ...(options?.cwd ? { cwd: options.cwd } : {}),
       },
     });
@@ -85,18 +88,19 @@ export class ClaudeAdapter implements GatewayAdapter {
               }
             } else if (subtype === 'task_started') {
               const taskDesc = (raw.description as string) ?? '';
-              const subAgentId = extractAgentId(taskDesc, raw.subagent_type as string | undefined);
-              console.log(`[Claude] Subagent started for ${configId}: ${subAgentId} — "${taskDesc.slice(0, 60)}"`);
-              await emit('lifecycle', { phase: 'start' }, subAgentId);
-              await emit('assistant', { text: `[${subAgentId}] Working on: ${taskDesc}` }, subAgentId);
+              const toolUseId = raw.tool_use_id as string | undefined;
+              const subAgentId = this.resolveAgentId(raw, toolUseId);
+              console.log(`[Claude] Subagent started for ${configId}: ${subAgentId} (tool_use_id: ${toolUseId}) — "${taskDesc.slice(0, 60)}"`);
+              await emit('lifecycle', { phase: 'start', taskId: raw.task_id }, subAgentId);
+              await emit('assistant', { text: `Working on: ${taskDesc}` }, subAgentId);
             } else if (subtype === 'task_progress') {
-              const subAgentId = extractAgentId(raw.description as string, raw.subagent_type as string | undefined);
+              const toolUseId = raw.tool_use_id as string | undefined;
+              const subAgentId = this.resolveAgentId(raw, toolUseId);
               const lastTool = raw.last_tool_name as string | undefined;
               if (lastTool) {
                 await emit('tool', { tool: lastTool, phase: 'start' }, subAgentId);
                 await emit('tool', { tool: lastTool, phase: 'end' }, subAgentId);
               }
-              // Emit progress summary as speech if available
               const summary = raw.summary as string | undefined;
               if (summary) {
                 await emit('assistant', { text: summary }, subAgentId);
@@ -105,7 +109,8 @@ export class ClaudeAdapter implements GatewayAdapter {
             } else if (subtype === 'task_notification') {
               const status = raw.status as string;
               const summary = (raw.summary as string) ?? '';
-              const subAgentId = extractAgentId(summary, raw.subagent_type as string | undefined);
+              const toolUseId = raw.tool_use_id as string | undefined;
+              const subAgentId = this.resolveAgentId(raw, toolUseId);
               if (summary) {
                 await emit('assistant', { text: summary }, subAgentId);
               }
@@ -113,6 +118,8 @@ export class ClaudeAdapter implements GatewayAdapter {
                 await emit('error', { error: 'Subagent task failed' }, subAgentId);
               }
               await emit('lifecycle', { phase: 'end' }, subAgentId);
+              // Clean up tool_use mapping
+              if (toolUseId) this.toolUseToAgent.delete(toolUseId);
               console.log(`[Claude] Subagent completed for ${configId}: ${subAgentId} (${status})`);
             }
           } else if (message.type === 'assistant') {
@@ -122,6 +129,15 @@ export class ClaudeAdapter implements GatewayAdapter {
               if (block.type === 'text') {
                 await emit('assistant', { text: block.text });
               } else if (block.type === 'tool_use') {
+                // Track Agent tool calls so we can attribute task events to specialists
+                if (block.name === 'Agent') {
+                  const input = block.input as Record<string, unknown>;
+                  const subagentType = input.subagent_type as string | undefined;
+                  if (subagentType) {
+                    this.toolUseToAgent.set(block.id, subagentType);
+                    console.log(`[Claude] Agent tool call ${block.id} → ${subagentType}`);
+                  }
+                }
                 await emit('tool', { tool: block.name, phase: 'start', toolArgs: block.input as Record<string, unknown> });
                 await emit('tool', { tool: block.name, phase: 'end' });
               }
@@ -243,29 +259,31 @@ export class ClaudeAdapter implements GatewayAdapter {
             }
           } else if (subtype === 'task_started') {
             const taskDesc = (raw.description as string) ?? '';
-            const subAgentId = extractAgentId(taskDesc, raw.subagent_type as string | undefined);
-            console.log(`[Claude] Subagent started for ${handle.configId}: ${subAgentId} — "${taskDesc.slice(0, 60)}"`);
-            await emit('lifecycle', { phase: 'start' }, subAgentId);
-            await emit('assistant', { text: `[${subAgentId}] Working on: ${taskDesc}` }, subAgentId);
+            const toolUseId = raw.tool_use_id as string | undefined;
+            const subAgentId = this.resolveAgentId(raw, toolUseId);
+            console.log(`[Claude] Subagent started for ${handle.configId}: ${subAgentId} (tool_use_id: ${toolUseId}) — "${taskDesc.slice(0, 60)}"`);
+            await emit('lifecycle', { phase: 'start', taskId: raw.task_id }, subAgentId);
+            await emit('assistant', { text: `Working on: ${taskDesc}` }, subAgentId);
           } else if (subtype === 'task_progress') {
-            const subAgentId = extractAgentId(raw.description as string, raw.subagent_type as string | undefined);
+            const toolUseId = raw.tool_use_id as string | undefined;
+            const subAgentId = this.resolveAgentId(raw, toolUseId);
             const lastTool = raw.last_tool_name as string | undefined;
             if (lastTool) {
               await emit('tool', { tool: lastTool, phase: 'start' }, subAgentId);
               await emit('tool', { tool: lastTool, phase: 'end' }, subAgentId);
             }
             const summary = raw.summary as string | undefined;
-            if (summary) {
-              await emit('assistant', { text: summary }, subAgentId);
-            }
+            if (summary) await emit('assistant', { text: summary }, subAgentId);
             await emit('lifecycle', { phase: 'thinking' }, subAgentId);
           } else if (subtype === 'task_notification') {
             const status = raw.status as string;
             const summary = (raw.summary as string) ?? '';
-            const subAgentId = extractAgentId(summary, raw.subagent_type as string | undefined);
+            const toolUseId = raw.tool_use_id as string | undefined;
+            const subAgentId = this.resolveAgentId(raw, toolUseId);
             if (summary) await emit('assistant', { text: summary }, subAgentId);
             if (status === 'failed') await emit('error', { error: 'Subagent task failed' }, subAgentId);
             await emit('lifecycle', { phase: 'end' }, subAgentId);
+            if (toolUseId) this.toolUseToAgent.delete(toolUseId);
             console.log(`[Claude] Subagent completed for ${handle.configId}: ${subAgentId} (${status})`);
           }
         } else if (msg.type === 'assistant') {
@@ -333,6 +351,19 @@ export class ClaudeAdapter implements GatewayAdapter {
       entry.abort.abort();
     }
     this.handles.clear();
+  }
+
+  /** Resolve agent ID from task events using multiple strategies */
+  private resolveAgentId(raw: Record<string, unknown>, toolUseId?: string): string {
+    // Strategy 1: Direct subagent_type on the event
+    if (typeof raw.subagent_type === 'string') return raw.subagent_type;
+    // Strategy 2: Look up from our tool_use_id → agent mapping
+    if (toolUseId && this.toolUseToAgent.has(toolUseId)) {
+      return this.toolUseToAgent.get(toolUseId)!;
+    }
+    // Strategy 3: Parse from description
+    const desc = (raw.description as string) ?? (raw.summary as string) ?? '';
+    return extractAgentId(desc);
   }
 }
 

@@ -5,6 +5,24 @@ import type { GatewayAdapter, SessionHandle } from '../adapters/adapter.js';
 import type { EventBus } from './event-bus.js';
 import { AgentDefinitionBuilder } from './agent-definition-builder.js';
 
+const TEAM_LEAD_SYSTEM_PROMPT = `You are the Team Lead of RigelHQ — an AI engineering organization.
+
+## Your Role
+You are an orchestrator. You receive tasks from users and delegate them to specialist agents using the Agent tool. You do NOT do the work yourself.
+
+## How You Work
+1. Analyze the user's request
+2. Decide which specialist(s) are needed
+3. Use the Agent tool to delegate to them (set subagent_type to the specialist's ID)
+4. Summarize results concisely for the user
+
+## CRITICAL RULES
+- ALWAYS delegate work to specialists using the Agent tool. Never write code, read files, or use Bash yourself.
+- Use the \`subagent_type\` parameter when calling the Agent tool — set it to the specialist's ID (e.g., "frontend-engineer", "backend-engineer").
+- For multi-domain tasks, make multiple Agent calls in parallel.
+- Keep your responses concise — focus on what was accomplished.
+`;
+
 interface ActiveSession {
   handle: SessionHandle;
   projectName: string;
@@ -43,14 +61,29 @@ export class SessionGateway {
       await this.handleEvent(event);
     };
 
-    const configId = `session-${Date.now()}`;
+    const configId = 'cea';  // Team lead uses the CEA configId for proper UI attribution
     const handle = await this.adapter.createSession(
       configId,
       initialPrompt,
       agents,
       onEvent,
-      { agentProgressSummaries: true },
+      {
+        systemPrompt: TEAM_LEAD_SYSTEM_PROMPT,
+        agentProgressSummaries: true,
+      },
     );
+
+    // Wait briefly for session ID to be populated from the init message
+    const waitForSession = async (): Promise<string> => {
+      for (let i = 0; i < 50; i++) {
+        if (handle.sessionId) return handle.sessionId;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      // Fallback: generate a temporary session ID
+      return `pending-${Date.now()}`;
+    };
+    const sessionId = await waitForSession();
+    handle.sessionId = sessionId;
 
     const session: ActiveSession = {
       handle,
@@ -59,20 +92,22 @@ export class SessionGateway {
       toolUseToAgent: new Map(),
     };
 
-    this.sessions.set(handle.sessionId, session);
+    this.sessions.set(sessionId, session);
 
     // Store in DB
-    await this.db.session.create({
-      data: {
+    await this.db.session.upsert({
+      where: { sessionId },
+      update: { projectName, status: 'ACTIVE' },
+      create: {
         projectName,
-        sessionId: handle.sessionId,
+        sessionId,
         status: 'ACTIVE',
       },
     });
 
-    this.resetIdleTimer(handle.sessionId);
-    console.log(`[SessionGW] Session created: ${handle.sessionId} for ${projectName}`);
-    return handle.sessionId;
+    this.resetIdleTimer(sessionId);
+    console.log(`[SessionGW] Session created: ${sessionId} for ${projectName}`);
+    return sessionId;
   }
 
   /** Send a follow-up message to an existing session */

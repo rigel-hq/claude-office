@@ -20,6 +20,8 @@ export interface SessionHandle {
 }
 
 export interface SessionOptions {
+  /** System prompt for the team lead session */
+  systemPrompt?: string;
   /** Enable ~30s AI-generated progress summaries for subagent tasks */
   agentProgressSummaries?: boolean;
   /** Working directory for this session */
