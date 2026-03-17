@@ -66,6 +66,8 @@ export class ClaudeAdapter implements GatewayAdapter {
 
     // Spawn Claude CLI in interactive mode with bidirectional JSON streaming
     // NOT using --print so the session stays alive for teammate events
+    // cwd MUST be the project directory so .claude/settings.json hooks are loaded
+    const projectDir = '/Users/charantej/charan_personal_projects/claude-office';
     const proc = spawn('claude', [
       '--verbose',
       '--output-format', 'stream-json',
@@ -76,7 +78,7 @@ export class ClaudeAdapter implements GatewayAdapter {
         ...process.env,
         CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
       },
-      cwd: options?.cwd ?? process.cwd(),
+      cwd: options?.cwd ?? projectDir,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -299,8 +301,11 @@ export class ClaudeAdapter implements GatewayAdapter {
         this.pollTeammateCompletion(cli, emit);
       }
     } else if (type === 'user') {
-      // Check tool_use_result (top-level field on teammate spawn/complete)
+      // Log all user messages for debugging
       const toolResult = msg.tool_use_result as Record<string, unknown> | undefined;
+      if (toolResult) {
+        console.log(`[Claude] USER tool_use_result: status=${toolResult.status} name=${toolResult.name} agentId=${toolResult.agentId} teammates=${cli.activeTeammates.size}`);
+      }
       if (toolResult?.status === 'teammate_spawned') {
         const name = toolResult.name as string;
         const teamName = toolResult.team_name as string;
@@ -324,7 +329,9 @@ export class ClaudeAdapter implements GatewayAdapter {
           if (block.type === 'tool_result') {
             const toolUseId = block.tool_use_id as string;
             const agentName = this.toolUseToAgent.get(toolUseId);
-            if (agentName && cli.activeTeammates.has(agentName)) {
+            const blockContent = typeof block.content === 'string' ? block.content.slice(0, 60) : '';
+            console.log(`[Claude] USER tool_result block: tool_use_id=${toolUseId} mapped_agent=${agentName ?? 'unknown'} active=${[...cli.activeTeammates].join(',')} content="${blockContent}"`);
+            if (agentName) {
               cli.activeTeammates.delete(agentName);
               console.log(`[Claude] ✅ Teammate completed (tool_result): ${agentName} (${cli.activeTeammates.size} remaining)`);
               await emit('lifecycle', { phase: 'end' }, agentName);

@@ -30,6 +30,7 @@ async function main() {
   const adapter = createAdapter();
   const sessionGateway = new SessionGateway(adapter, eventBus, db);
   const hookReceiver = new HookReceiver(eventBus);
+  hookReceiver.setDb(db);
   const fileWatcher = new FileWatcher(eventBus);
 
   // HTTP server handles both hooks (POST /hooks/event) and WebSocket upgrades
