@@ -132,11 +132,20 @@ export class ClaudeAdapter implements GatewayAdapter {
                 // Track Agent tool calls so we can attribute task events to specialists
                 if (block.name === 'Agent') {
                   const input = block.input as Record<string, unknown>;
-                  const subagentType = input.subagent_type as string | undefined;
-                  if (subagentType) {
-                    this.toolUseToAgent.set(block.id, subagentType);
-                    console.log(`[Claude] Agent tool call ${block.id} → ${subagentType}`);
+                  // Teammate spawn: has name + team_name
+                  const agentName = (input.name as string) ?? (input.subagent_type as string);
+                  if (agentName) {
+                    this.toolUseToAgent.set(block.id, agentName);
+                    const teamName = input.team_name as string | undefined;
+                    const isTeammate = !!teamName;
+                    console.log(`[Claude] Agent tool call ${block.id} → ${agentName}${isTeammate ? ` (team: ${teamName})` : ''}`);
                   }
+                } else if (block.name === 'TeamCreate') {
+                  const input = block.input as Record<string, unknown>;
+                  console.log(`[Claude] TeamCreate: ${input.team_name}`);
+                } else if (block.name === 'SendMessage') {
+                  const input = block.input as Record<string, unknown>;
+                  console.log(`[Claude] SendMessage to: ${input.to ?? input.recipient}`);
                 }
                 await emit('tool', { tool: block.name, phase: 'start', toolArgs: block.input as Record<string, unknown> });
                 await emit('tool', { tool: block.name, phase: 'end' });
@@ -361,9 +370,17 @@ export class ClaudeAdapter implements GatewayAdapter {
     if (toolUseId && this.toolUseToAgent.has(toolUseId)) {
       return this.toolUseToAgent.get(toolUseId)!;
     }
-    // Strategy 3: Parse from description
-    const desc = (raw.description as string) ?? (raw.summary as string) ?? '';
-    return extractAgentId(desc);
+    // Strategy 3: For in_process_teammate, the description starts with "name: ..."
+    const desc = (raw.description as string) ?? '';
+    if (raw.task_type === 'in_process_teammate') {
+      const colonIdx = desc.indexOf(':');
+      if (colonIdx > 0) {
+        const name = desc.slice(0, colonIdx).trim();
+        if (name) return name;
+      }
+    }
+    // Strategy 4: Parse from description
+    return extractAgentId(desc || (raw.summary as string));
   }
 }
 
