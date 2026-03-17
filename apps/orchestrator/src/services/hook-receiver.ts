@@ -264,22 +264,37 @@ export class HookReceiver {
 
   /** Update agent status in DB and broadcast via WebSocket */
   private async updateAgentStatus(agentId: string, status: string): Promise<void> {
+    console.log(`[Hook] 📡 Status update: ${agentId} → ${status}`);
     if (this.db) {
       const roleMeta = AGENT_ROLE_MAP.get(agentId);
       if (roleMeta) {
-        await this.db.agent.upsert({
-          where: { configId: agentId },
-          update: { status: status as any },
-          create: {
-            configId: agentId,
-            name: roleMeta.name,
-            role: roleMeta.role,
-            icon: roleMeta.icon,
-            status: status as any,
-          },
-        }).catch(() => {});
+        try {
+          await this.db.agent.upsert({
+            where: { configId: agentId },
+            update: { status: status as any },
+            create: {
+              configId: agentId,
+              name: roleMeta.name,
+              role: roleMeta.role,
+              icon: roleMeta.icon,
+              status: status as any,
+            },
+          });
+        } catch (err) {
+          console.error(`[Hook] DB error for ${agentId}:`, err);
+        }
       }
     }
-    await this.eventBus.publishStatus(agentId, status as any);
+    // Publish as a lifecycle event on the global channel so WebSocket picks it up
+    const phase = status === 'IDLE' ? 'end' : status === 'THINKING' ? 'thinking' : 'start';
+    await this.eventBus.publish({
+      id: generateEventId(),
+      agentId,
+      runId: generateRunId(),
+      seq: 1,
+      stream: 'lifecycle',
+      timestamp: Date.now(),
+      data: { phase },
+    });
   }
 }
