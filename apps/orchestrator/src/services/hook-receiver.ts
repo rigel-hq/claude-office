@@ -167,7 +167,14 @@ export class HookReceiver {
         if (agentName) stoppedAgents.add(agentName);
 
         if (agentName && AGENT_ROLE_MAP.has(agentName)) {
-          await this.updateAgentStatus(agentName, 'IDLE');
+          // Debounce: delay IDLE by 3s — if the agent restarts (shutdown protocol),
+          // the SubagentStart handler will cancel the stoppedAgents guard
+          setTimeout(async () => {
+            // Only set IDLE if agent is still in stopped state (wasn't re-spawned)
+            if (stoppedAgents.has(agentName)) {
+              await this.updateAgentStatus(agentName, 'IDLE');
+            }
+          }, 3000);
 
           // End communication line
           const collabId = activeCollabs.get(agentName);
@@ -189,9 +196,14 @@ export class HookReceiver {
           }
 
           // If ALL agents are now idle (no active collabs), set CEA to IDLE too
+          // Debounce to handle shutdown protocol re-spawns
           if (activeCollabs.size === 0) {
-            console.log(`[Hook] All teammates done — setting CEA to IDLE`);
-            await this.updateAgentStatus('cea', 'IDLE');
+            setTimeout(async () => {
+              if (activeCollabs.size === 0) {
+                console.log(`[Hook] All teammates done — setting CEA to IDLE`);
+                await this.updateAgentStatus('cea', 'IDLE');
+              }
+            }, 5000);
           }
         }
         // Clean up ID mapping
