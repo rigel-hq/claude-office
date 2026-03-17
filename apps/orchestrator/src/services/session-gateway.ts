@@ -1,14 +1,10 @@
 import type { PrismaClient } from '@prisma/client';
-import type { AgentEvent, AgentStatus, EventStream } from '@rigelhq/shared';
+import type { AgentEvent } from '@rigelhq/shared';
 import { AGENT_ROLE_MAP } from '@rigelhq/shared';
 import type { GatewayAdapter, SessionHandle } from '../adapters/adapter.js';
 import type { EventBus } from './event-bus.js';
 import { AgentDefinitionBuilder } from './agent-definition-builder.js';
 import { generateEventId, generateRunId } from '@rigelhq/shared';
-
-/** Color palette for communication lines */
-const LINE_COLORS = ['#14b8a6', '#f59e0b', '#f43f5e', '#8b5cf6', '#84cc16', '#06b6d4', '#ec4899', '#22c55e'];
-let colorIndex = 0;
 
 const TEAM_LEAD_SYSTEM_PROMPT = `You are the Team Lead of RigelHQ — an AI engineering organization with 20 specialist agents.
 
@@ -243,23 +239,6 @@ export class SessionGateway {
   private async handleEvent(event: AgentEvent): Promise<void> {
     // Publish all events to the bus (UI gets everything — activity feed, chat)
     await this.eventBus.publish(event);
-  }
-
-  private mapEventToStatus(event: AgentEvent): AgentStatus | null {
-    switch (event.stream) {
-      case 'lifecycle':
-        if (event.data.phase === 'start' || event.data.phase === 'thinking') return 'THINKING';
-        if (event.data.phase === 'end') return 'IDLE';
-        return null;
-      case 'tool':
-        return 'TOOL_CALLING';
-      case 'assistant':
-        return 'SPEAKING';
-      case 'error':
-        return 'ERROR';
-      default:
-        return null;
-    }
   }
 
   // ---------------------------------------------------------------------------

@@ -67,7 +67,7 @@ export class ClaudeAdapter implements GatewayAdapter {
     // Spawn Claude CLI in interactive mode with bidirectional JSON streaming
     // NOT using --print so the session stays alive for teammate events
     // cwd MUST be the project directory so .claude/settings.json hooks are loaded
-    const projectDir = '/Users/charantej/charan_personal_projects/claude-office';
+    const projectDir = process.cwd();
     const proc = spawn('claude', [
       '--verbose',
       '--output-format', 'stream-json',
