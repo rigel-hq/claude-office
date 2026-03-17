@@ -10,7 +10,10 @@ const LINE_COLORS = ['#14b8a6', '#f59e0b', '#f43f5e', '#8b5cf6', '#84cc16', '#06
 let colorIndex = 0;
 
 /** Track active collaborations for line lifecycle */
-const activeCollabs = new Map<string, string>(); // agentId → collabId
+const activeCollabs = new Map<string, string>(); // agentName → collabId
+
+/** Map internal agent IDs (a080e64ae...) to agent names (github-repos-owner) */
+const agentIdToName = new Map<string, string>();
 
 export class HookReceiver {
   private db: PrismaClient | null = null;
@@ -73,15 +76,23 @@ export class HookReceiver {
         const agentType = payload.agent_type as string ?? '';
         console.log(`[Hook] 🚀 Subagent START: id=${agentId} type=${agentType} session=${sessionId?.slice(0, 8)}`);
 
+        // Map internal ID → agent name (agent_type has the name like "github-repos-owner")
+        if (agentId && agentType) {
+          agentIdToName.set(agentId, agentType);
+        }
+
+        // Resolve the display name
+        const agentName = agentType || agentId;
+
         // If this is a known specialist, activate them in the UI
-        if (agentId && AGENT_ROLE_MAP.has(agentId)) {
-          await this.updateAgentStatus(agentId, 'THINKING');
+        if (agentName && AGENT_ROLE_MAP.has(agentName)) {
+          await this.updateAgentStatus(agentName, 'THINKING');
 
           // Create communication line from CEA to this agent
           const color = LINE_COLORS[colorIndex % LINE_COLORS.length];
           colorIndex++;
-          const collabId = `hook-${agentId}-${Date.now()}`;
-          activeCollabs.set(agentId, collabId);
+          const collabId = `hook-${agentName}-${Date.now()}`;
+          activeCollabs.set(agentName, collabId);
 
           await this.eventBus.publish({
             id: generateEventId(),
@@ -94,8 +105,8 @@ export class HookReceiver {
               phase: 'start',
               collaborationId: collabId,
               type: 'parallel',
-              participants: ['cea', agentId],
-              topic: `Working: ${agentId}`,
+              participants: ['cea', agentName],
+              topic: `Working: ${agentName}`,
               color,
             },
           });
@@ -104,19 +115,20 @@ export class HookReceiver {
       }
 
       case 'SubagentStop': {
-        // A teammate/subagent process stopped
-        console.log(`[Hook] 🏁 Subagent STOP: id=${agentId} session=${sessionId?.slice(0, 8)}`);
+        // A teammate/subagent process stopped — resolve internal ID to name
+        const agentName = agentIdToName.get(agentId) ?? agentId;
+        console.log(`[Hook] 🏁 Subagent STOP: id=${agentId} name=${agentName} session=${sessionId?.slice(0, 8)}`);
 
-        if (agentId && AGENT_ROLE_MAP.has(agentId)) {
-          await this.updateAgentStatus(agentId, 'IDLE');
+        if (agentName && AGENT_ROLE_MAP.has(agentName)) {
+          await this.updateAgentStatus(agentName, 'IDLE');
 
           // End communication line
-          const collabId = activeCollabs.get(agentId);
+          const collabId = activeCollabs.get(agentName);
           if (collabId) {
-            activeCollabs.delete(agentId);
+            activeCollabs.delete(agentName);
             await this.eventBus.publish({
               id: generateEventId(),
-              agentId,
+              agentId: agentName,
               runId: generateRunId(),
               seq: 1,
               stream: 'collaboration' as EventStream,
@@ -124,21 +136,24 @@ export class HookReceiver {
               data: {
                 phase: 'end',
                 collaborationId: collabId,
-                participants: ['cea', agentId],
+                participants: ['cea', agentName],
               },
             });
           }
         }
+        // Clean up ID mapping
+        agentIdToName.delete(agentId);
         break;
       }
 
       case 'PreToolUse': {
-        // Agent is about to use a tool — show as TOOL_CALLING
-        if (agentId && AGENT_ROLE_MAP.has(agentId)) {
-          await this.updateAgentStatus(agentId, 'TOOL_CALLING');
+        // Agent is about to use a tool — resolve name and show as TOOL_CALLING
+        const resolvedName = agentIdToName.get(agentId) ?? agentId;
+        if (resolvedName && AGENT_ROLE_MAP.has(resolvedName)) {
+          await this.updateAgentStatus(resolvedName, 'TOOL_CALLING');
           await this.eventBus.publish({
             id: generateEventId(),
-            agentId,
+            agentId: resolvedName,
             runId: generateRunId(),
             seq: 1,
             stream: 'tool',
@@ -150,12 +165,13 @@ export class HookReceiver {
       }
 
       case 'PostToolUse': {
-        // Agent finished using a tool
-        if (agentId && AGENT_ROLE_MAP.has(agentId)) {
-          await this.updateAgentStatus(agentId, 'THINKING');
+        // Agent finished using a tool — resolve name
+        const resolvedName = agentIdToName.get(agentId) ?? agentId;
+        if (resolvedName && AGENT_ROLE_MAP.has(resolvedName)) {
+          await this.updateAgentStatus(resolvedName, 'THINKING');
           await this.eventBus.publish({
             id: generateEventId(),
-            agentId,
+            agentId: resolvedName,
             runId: generateRunId(),
             seq: 1,
             stream: 'tool',
@@ -168,9 +184,9 @@ export class HookReceiver {
         if (toolName === 'SendMessage') {
           const toolInput = payload.tool_input as Record<string, unknown> | undefined;
           const to = (toolInput?.to as string) ?? (toolInput?.recipient as string);
-          if (to && agentId) {
-            console.log(`[Hook] 💬 SendMessage: ${agentId} → ${to}`);
-            // TODO: emit specialist-to-specialist communication line
+          const fromName = agentIdToName.get(agentId) ?? agentId;
+          if (to && fromName) {
+            console.log(`[Hook] 💬 SendMessage: ${fromName} → ${to}`);
           }
         }
         break;
