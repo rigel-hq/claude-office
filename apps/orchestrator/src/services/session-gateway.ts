@@ -1,26 +1,57 @@
 import type { PrismaClient } from '@prisma/client';
-import type { AgentEvent, AgentStatus } from '@rigelhq/shared';
+import type { AgentEvent, AgentStatus, EventStream } from '@rigelhq/shared';
 import { AGENT_ROLE_MAP } from '@rigelhq/shared';
 import type { GatewayAdapter, SessionHandle } from '../adapters/adapter.js';
 import type { EventBus } from './event-bus.js';
 import { AgentDefinitionBuilder } from './agent-definition-builder.js';
+import { generateEventId, generateRunId } from '@rigelhq/shared';
 
-const TEAM_LEAD_SYSTEM_PROMPT = `You are the Team Lead of RigelHQ — an AI engineering organization.
+/** Color palette for communication lines */
+const LINE_COLORS = ['#14b8a6', '#f59e0b', '#f43f5e', '#8b5cf6', '#84cc16', '#06b6d4', '#ec4899', '#22c55e'];
+let colorIndex = 0;
+
+const TEAM_LEAD_SYSTEM_PROMPT = `You are the Team Lead of RigelHQ — an AI engineering organization with 20 specialist agents.
 
 ## Your Role
-You are an orchestrator. You receive tasks from users and delegate them to specialist agents using the Agent tool. You do NOT do the work yourself.
+You are a pure orchestrator. You receive tasks from users and ALWAYS delegate them to specialist agents using the Agent tool. You NEVER do work yourself — no Bash, no Read, no Write, no code.
 
 ## How You Work
 1. Analyze the user's request
-2. Decide which specialist(s) are needed
-3. Use the Agent tool to delegate to them (set subagent_type to the specialist's ID)
+2. Pick the RIGHT specialist(s) — see routing table below
+3. Use the Agent tool with \`subagent_type\` set to the specialist's ID
 4. Summarize results concisely for the user
 
+## Routing Table
+| Task | Specialist (subagent_type) |
+|------|--------------------------|
+| Frontend, UI, React, CSS | frontend-engineer |
+| Backend, APIs, server, DB queries | backend-engineer |
+| Mobile apps | app-developer |
+| Git status, commits, branches, push | github-repos-owner |
+| Code review, review changes | code-review-engineer |
+| CI/CD, Docker, deploy, infra | devops-engineer |
+| Cloud infra, Terraform, AWS | infra-engineer |
+| Database schema, migrations, DBA | dba-engineer |
+| Platform, build systems | platform-engineer |
+| Testing, QA, bugs | qa-tester |
+| Automated tests, E2E | automation-qa-tester |
+| Load testing, performance | load-tester |
+| Security audit, vulnerabilities | security-engineer |
+| System design, architecture | technical-architect |
+| Product requirements, specs | product-manager |
+| UX design, wireframes | ux-designer |
+| SRE, monitoring, incidents | sre-engineer |
+| NOC, alerts, uptime | noc-engineer |
+| Operations, runbooks | operations-engineer |
+| Project planning, timelines | projects-manager |
+
 ## CRITICAL RULES
-- ALWAYS delegate work to specialists using the Agent tool. Never write code, read files, or use Bash yourself.
-- Use the \`subagent_type\` parameter when calling the Agent tool — set it to the specialist's ID (e.g., "frontend-engineer", "backend-engineer").
-- For multi-domain tasks, make multiple Agent calls in parallel.
-- Keep your responses concise — focus on what was accomplished.
+- ALWAYS delegate. Never do the work yourself.
+- Use the exact subagent_type IDs from the table above.
+- For "review code" or "is code reviewed" → use code-review-engineer.
+- For "git status" or "uncommitted changes" → use github-repos-owner.
+- For multi-domain tasks, make multiple parallel Agent calls.
+- Keep your summaries short.
 `;
 
 interface ActiveSession {
@@ -34,6 +65,7 @@ interface ActiveSession {
 export class SessionGateway {
   private sessions = new Map<string, ActiveSession>();       // sessionId -> ActiveSession
   private configToSession = new Map<string, string>();       // configId -> sessionId (for lookup)
+  private activeCollabs = new Map<string, string>();         // agentId -> collaborationId (for line lifecycle)
   private agentDefBuilder: AgentDefinitionBuilder;
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -199,7 +231,10 @@ export class SessionGateway {
 
     // Track agent status based on event stream
     const agentId = event.agentId;
-    if (!agentId || !AGENT_ROLE_MAP.has(agentId)) return;
+    const isCea = agentId === 'cea';
+    const isKnownAgent = agentId && AGENT_ROLE_MAP.has(agentId);
+
+    if (!isKnownAgent) return;
 
     const status = this.mapEventToStatus(event);
     if (!status) return;
@@ -230,6 +265,51 @@ export class SessionGateway {
         session.activeAgents.delete(agentId);
       } else {
         session.activeAgents.add(agentId);
+      }
+    }
+
+    // Emit collaboration events for communication lines (specialist agents only)
+    if (!isCea && status === 'THINKING' && event.stream === 'lifecycle' && event.data.phase === 'start') {
+      // Specialist started — draw line from CEA to specialist
+      const color = LINE_COLORS[colorIndex % LINE_COLORS.length];
+      colorIndex++;
+      const collaborationId = `comm-${agentId}-${Date.now()}`;
+      // Track so we can end it later
+      this.activeCollabs.set(agentId, collaborationId);
+      await this.eventBus.publish({
+        id: generateEventId(),
+        agentId: 'cea',
+        runId: generateRunId(),
+        seq: 1,
+        stream: 'collaboration' as EventStream,
+        timestamp: Date.now(),
+        data: {
+          phase: 'start',
+          collaborationId,
+          type: 'parallel',
+          participants: ['cea', agentId],
+          topic: `Delegated to ${roleMeta.name}`,
+          color,
+        },
+      });
+    } else if (!isCea && status === 'IDLE' && event.stream === 'lifecycle' && event.data.phase === 'end') {
+      // Specialist finished — fade line
+      const collaborationId = this.activeCollabs.get(agentId);
+      if (collaborationId) {
+        this.activeCollabs.delete(agentId);
+        await this.eventBus.publish({
+          id: generateEventId(),
+          agentId,
+          runId: generateRunId(),
+          seq: 1,
+          stream: 'collaboration' as EventStream,
+          timestamp: Date.now(),
+          data: {
+            phase: 'end',
+            collaborationId,
+            participants: ['cea', agentId],
+          },
+        });
       }
     }
   }

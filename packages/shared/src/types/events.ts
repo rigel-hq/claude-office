@@ -1,6 +1,7 @@
 export type EventStream =
   | 'lifecycle' | 'tool' | 'assistant' | 'error'
-  | 'session' | 'baby-agent' | 'communication';
+  | 'collaboration' | 'communication'
+  | 'session' | 'baby-agent';
 
 export interface AgentEvent {
   id: string;
