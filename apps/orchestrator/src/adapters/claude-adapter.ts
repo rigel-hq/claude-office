@@ -1,14 +1,20 @@
-import {
-  unstable_v2_createSession,
-  listSessions as sdkListSessions,
-} from '@anthropic-ai/claude-agent-sdk';
-import type { SDKSession, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { spawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
+import { listSessions as sdkListSessions } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentEvent, EventStream } from '@rigelhq/shared';
 import { generateRunId, generateEventId } from '@rigelhq/shared';
 import type { GatewayAdapter, SessionHandle, AgentEventCallback, SessionOptions, SessionInfo } from './adapter.js';
 
+interface ActiveCLI {
+  proc: ChildProcess;
+  configId: string;
+  sessionId: string;
+  onEvent: AgentEventCallback;
+  emit: (stream: EventStream, data: AgentEvent['data'], agentId?: string) => Promise<void>;
+}
+
 export class ClaudeAdapter implements GatewayAdapter {
-  private sessions = new Map<string, { session: SDKSession; configId: string }>();
+  private cliProcesses = new Map<string, ActiveCLI>();
   /** Map tool_use_id → agent name from Agent tool calls */
   private toolUseToAgent = new Map<string, string>();
 
@@ -20,6 +26,7 @@ export class ClaudeAdapter implements GatewayAdapter {
   ): Promise<SessionHandle> {
     const runId = generateRunId();
     let seq = 0;
+    let sessionId = '';
 
     const emit = async (stream: EventStream, data: AgentEvent['data'], agentId?: string) => {
       seq += 1;
@@ -34,106 +41,173 @@ export class ClaudeAdapter implements GatewayAdapter {
       });
     };
 
-    // Create a persistent V2 session — stays alive for teammate events
-    const session = unstable_v2_createSession({
-      model: 'claude-opus-4-6',
-      permissionMode: 'bypassPermissions',
+    // Build the initial message — prepend system prompt if provided
+    const fullPrompt = options?.systemPrompt
+      ? JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: `[System Instructions]\n${options.systemPrompt}\n\n[User Message]\n${initialPrompt}` },
+            ],
+          },
+        })
+      : JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: initialPrompt }],
+          },
+        });
+
+    // Spawn Claude CLI with bidirectional streaming
+    const proc = spawn('claude', [
+      '--print',
+      '--verbose',
+      '--output-format', 'stream-json',
+      '--input-format', 'stream-json',
+      '--dangerously-skip-permissions',
+      '--replay-user-messages',
+    ], {
       env: {
         ...process.env,
         CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
       },
+      cwd: options?.cwd ?? process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    this.sessions.set(configId, { session, configId });
+    console.log(`[Claude] CLI spawned for ${configId} (PID: ${proc.pid})`);
 
-    // Start the background stream processor — runs for the entire session lifetime
-    const streamProcessor = (async () => {
-      await emit('lifecycle', { phase: 'start' });
-      try {
-        for await (const message of session.stream()) {
-          await this.processMessage(message, configId, emit);
-        }
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        if (!errorMsg.includes('abort') && !errorMsg.includes('closed')) {
-          await emit('error', { error: errorMsg });
+    const cli: ActiveCLI = { proc, configId, sessionId: '', onEvent, emit };
+
+    // Parse stdout JSON lines
+    let buffer = '';
+    proc.stdout!.on('data', (data: Buffer) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          this.processMessage(msg, configId, emit, cli).catch((err) => {
+            console.error(`[Claude] Error processing message for ${configId}:`, err);
+          });
+        } catch {
+          // Not valid JSON — ignore
         }
       }
-      await emit('lifecycle', { phase: 'end' });
-    })();
+    });
 
-    // Send the initial prompt (with system prompt prepended)
-    const fullPrompt = options?.systemPrompt
-      ? `[System Instructions]\n${options.systemPrompt}\n\n[User Message]\n${initialPrompt}`
-      : initialPrompt;
+    proc.stderr!.on('data', (data: Buffer) => {
+      const text = data.toString().trim();
+      if (text && !text.includes('Debug:')) {
+        console.log(`[Claude] ${configId} stderr: ${text.slice(0, 200)}`);
+      }
+    });
 
-    await session.send(fullPrompt);
+    proc.on('close', (code) => {
+      console.log(`[Claude] CLI process for ${configId} exited (code: ${code})`);
+      this.cliProcesses.delete(configId);
+      emit('lifecycle', { phase: 'end' }).catch(() => {});
+    });
 
-    // Wait briefly for session ID to be populated
-    let sessionId = '';
-    for (let i = 0; i < 50; i++) {
-      try {
-        sessionId = session.sessionId;
-        if (sessionId) break;
-      } catch { /* not initialized yet */ }
-      await new Promise(r => setTimeout(r, 100));
-    }
+    // Send the initial prompt
+    proc.stdin!.write(fullPrompt + '\n');
 
-    console.log(`[Claude] V2 session created for ${configId}: ${sessionId}`);
+    // Wait for session ID from init message
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => resolve(), 10_000);
+      const check = setInterval(() => {
+        if (cli.sessionId) {
+          clearInterval(check);
+          clearTimeout(timeout);
+          resolve();
+        }
+      }, 100);
+    });
+
+    sessionId = cli.sessionId;
+    this.cliProcesses.set(configId, cli);
+
+    await emit('lifecycle', { phase: 'start' });
 
     const handle: SessionHandle = {
       sessionId,
       configId,
       send: async (message: string) => {
-        await session.send(message);
+        const entry = this.cliProcesses.get(configId);
+        if (!entry?.proc.stdin?.writable) {
+          throw new Error(`CLI process for ${configId} is not writable`);
+        }
+        const msg = JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: message }],
+          },
+        });
+        entry.proc.stdin.write(msg + '\n');
       },
       close: async () => {
-        session.close();
-        this.sessions.delete(configId);
+        const entry = this.cliProcesses.get(configId);
+        if (entry) {
+          entry.proc.stdin?.end();
+          entry.proc.kill();
+          this.cliProcesses.delete(configId);
+        }
       },
     };
 
     return handle;
   }
 
-  /** Process a single SDK message and emit appropriate events */
+  /** Process a single JSON message from the CLI stdout */
   private async processMessage(
-    message: SDKMessage,
+    msg: Record<string, unknown>,
     configId: string,
     emit: (stream: EventStream, data: AgentEvent['data'], agentId?: string) => Promise<void>,
+    cli: ActiveCLI,
   ): Promise<void> {
-    if (message.type === 'system') {
-      const raw = message as unknown as Record<string, unknown>;
-      const subtype = raw.subtype as string;
+    const type = msg.type as string;
+
+    if (type === 'system') {
+      const subtype = msg.subtype as string;
 
       if (subtype === 'init') {
-        console.log(`[Claude] Session init for ${configId}: ${raw.session_id}`);
+        const sid = msg.session_id as string;
+        if (sid) {
+          cli.sessionId = sid;
+          console.log(`[Claude] Session init for ${configId}: ${sid}`);
+        }
       } else if (subtype === 'task_started') {
-        const taskDesc = (raw.description as string) ?? '';
-        const toolUseId = raw.tool_use_id as string | undefined;
-        const agentId = this.resolveAgentId(raw, toolUseId);
-        const taskType = raw.task_type as string;
-        console.log(`[Claude] ${taskType === 'in_process_teammate' ? 'Teammate' : 'Agent'} started: ${agentId} — "${taskDesc.slice(0, 60)}"`);
-        await emit('lifecycle', { phase: 'start', taskId: raw.task_id, taskType }, agentId);
+        const taskDesc = (msg.description as string) ?? '';
+        const toolUseId = msg.tool_use_id as string | undefined;
+        const agentId = this.resolveAgentId(msg, toolUseId);
+        const taskType = msg.task_type as string;
+        console.log(`[Claude] ${taskType === 'in_process_teammate' ? 'TEAMMATE' : 'Agent'} started: ${agentId} — "${taskDesc.slice(0, 60)}"`);
+        await emit('lifecycle', { phase: 'start', taskId: msg.task_id, taskType }, agentId);
         await emit('assistant', { text: `Working on: ${taskDesc}` }, agentId);
       } else if (subtype === 'task_progress') {
-        const toolUseId = raw.tool_use_id as string | undefined;
-        const agentId = this.resolveAgentId(raw, toolUseId);
-        const lastTool = raw.last_tool_name as string | undefined;
+        const toolUseId = msg.tool_use_id as string | undefined;
+        const agentId = this.resolveAgentId(msg, toolUseId);
+        const lastTool = msg.last_tool_name as string | undefined;
         if (lastTool) {
           await emit('tool', { tool: lastTool, phase: 'start' }, agentId);
           await emit('tool', { tool: lastTool, phase: 'end' }, agentId);
         }
-        const summary = raw.summary as string | undefined;
+        const summary = msg.summary as string | undefined;
         if (summary) {
           await emit('assistant', { text: summary }, agentId);
         }
         await emit('lifecycle', { phase: 'thinking' }, agentId);
       } else if (subtype === 'task_notification') {
-        const status = raw.status as string;
-        const summary = (raw.summary as string) ?? '';
-        const toolUseId = raw.tool_use_id as string | undefined;
-        const agentId = this.resolveAgentId(raw, toolUseId);
+        const status = msg.status as string;
+        const summary = (msg.summary as string) ?? '';
+        const toolUseId = msg.tool_use_id as string | undefined;
+        const agentId = this.resolveAgentId(msg, toolUseId);
         if (summary) {
           await emit('assistant', { text: summary }, agentId);
         }
@@ -142,24 +216,26 @@ export class ClaudeAdapter implements GatewayAdapter {
         }
         await emit('lifecycle', { phase: 'end' }, agentId);
         if (toolUseId) this.toolUseToAgent.delete(toolUseId);
-        console.log(`[Claude] Agent completed: ${agentId} (${status})`);
+        console.log(`[Claude] ${agentId} completed (${status})`);
       }
-    } else if (message.type === 'assistant') {
-      const raw = message as unknown as Record<string, unknown>;
-      const msg = raw.message as Record<string, unknown>;
-      const content = msg?.content as Array<Record<string, unknown>>;
+    } else if (type === 'assistant') {
+      const message = msg.message as Record<string, unknown>;
+      const content = message?.content as Array<Record<string, unknown>>;
       if (!content) return;
 
-      await emit('lifecycle', { phase: 'thinking' });
+      // Check if this is from a teammate (parent_tool_use_id present)
+      const parentToolUseId = msg.parent_tool_use_id as string | undefined;
+      const agentId = parentToolUseId ? this.toolUseToAgent.get(parentToolUseId) : undefined;
+
+      await emit('lifecycle', { phase: 'thinking' }, agentId);
       for (const block of content) {
         if (block.type === 'text') {
-          await emit('assistant', { text: block.text as string });
+          await emit('assistant', { text: block.text as string }, agentId);
         } else if (block.type === 'tool_use') {
           const toolName = block.name as string;
           const toolId = block.id as string;
           const input = block.input as Record<string, unknown>;
 
-          // Track Agent/TeamCreate/SendMessage for visualization
           if (toolName === 'Agent') {
             const agentName = (input.name as string) ?? (input.subagent_type as string);
             if (agentName) {
@@ -170,18 +246,29 @@ export class ClaudeAdapter implements GatewayAdapter {
           } else if (toolName === 'TeamCreate') {
             console.log(`[Claude] TeamCreate: ${input.team_name}`);
           } else if (toolName === 'SendMessage') {
-            console.log(`[Claude] SendMessage to: ${input.to ?? input.recipient}`);
+            const to = (input.to as string) ?? (input.recipient as string);
+            console.log(`[Claude] SendMessage to: ${to}`);
+            // Emit as communication event so the UI can show agent-to-agent lines
+            if (to && agentId) {
+              await emit('assistant', { text: `[Message to ${to}]` }, agentId);
+            }
           }
 
-          await emit('tool', { tool: toolName, phase: 'start', toolArgs: input });
-          await emit('tool', { tool: toolName, phase: 'end' });
+          await emit('tool', { tool: toolName, phase: 'start', toolArgs: input }, agentId);
+          await emit('tool', { tool: toolName, phase: 'end' }, agentId);
         }
       }
-    } else if (message.type === 'result') {
-      const raw = message as unknown as Record<string, unknown>;
-      console.log(`[Claude] Result: ${raw.subtype}`);
-      // Don't emit lifecycle:end here — the V2 stream stays alive
-      // Lifecycle end is emitted when the stream itself closes
+    } else if (type === 'result') {
+      console.log(`[Claude] Result: ${msg.subtype} (session stays alive for teammates)`);
+      // Don't emit lifecycle:end — the CLI process stays alive for teammates
+    } else if (type === 'user') {
+      // Tool results / user messages — check for teammate spawn confirmations
+      const toolResult = msg.tool_use_result as Record<string, unknown> | undefined;
+      if (toolResult?.status === 'teammate_spawned') {
+        const name = toolResult.name as string;
+        const teamName = toolResult.team_name as string;
+        console.log(`[Claude] Teammate confirmed: ${name}@${teamName}`);
+      }
     }
   }
 
@@ -207,45 +294,33 @@ export class ClaudeAdapter implements GatewayAdapter {
   }
 
   async stopAll(): Promise<void> {
-    for (const [, entry] of this.sessions) {
-      entry.session.close();
+    for (const [, entry] of this.cliProcesses) {
+      entry.proc.stdin?.end();
+      entry.proc.kill();
     }
-    this.sessions.clear();
+    this.cliProcesses.clear();
   }
 
   /** Resolve agent ID from task events */
-  private resolveAgentId(raw: Record<string, unknown>, toolUseId?: string): string {
-    // Strategy 1: Direct subagent_type
-    if (typeof raw.subagent_type === 'string') return raw.subagent_type;
-    // Strategy 2: Look up from tool_use_id mapping
+  private resolveAgentId(msg: Record<string, unknown>, toolUseId?: string): string {
+    if (typeof msg.subagent_type === 'string') return msg.subagent_type;
     if (toolUseId && this.toolUseToAgent.has(toolUseId)) {
       return this.toolUseToAgent.get(toolUseId)!;
     }
-    // Strategy 3: For in_process_teammate, name is before the colon in description
-    const desc = (raw.description as string) ?? '';
-    if (raw.task_type === 'in_process_teammate') {
+    const desc = (msg.description as string) ?? '';
+    if (msg.task_type === 'in_process_teammate') {
       const colonIdx = desc.indexOf(':');
       if (colonIdx > 0) {
         const name = desc.slice(0, colonIdx).trim();
         if (name) return name;
       }
     }
-    // Strategy 4: Parse from description
-    return extractAgentId(desc || (raw.summary as string));
+    return extractAgentId(desc || (msg.summary as string));
   }
 }
 
-/** Extract session_id from an SDK init message */
-function extractSessionId(raw: Record<string, unknown>): string | undefined {
-  if (typeof raw.session_id === 'string') return raw.session_id;
-  const data = raw.data as Record<string, unknown> | undefined;
-  if (typeof data?.session_id === 'string') return data.session_id;
-  return undefined;
-}
-
 /** Extract agent ID from description text */
-function extractAgentId(desc: string | undefined, subagentType?: string): string {
-  if (subagentType) return subagentType;
+function extractAgentId(desc: string | undefined): string {
   if (!desc) return 'subagent';
   const match = desc.match(/^\[?([a-z][\w-]*)\]?/i);
   return match?.[1] ?? 'subagent';
