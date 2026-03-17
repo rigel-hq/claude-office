@@ -75,12 +75,12 @@ SendMessage({ to: "frontend-engineer", content: "Please also add form validation
 - After all teammates complete, summarize their results concisely for the user.
 - Keep your summaries short.
 
-## IMPORTANT: Teammate Lifecycle
-- Spawn each teammate ONCE per task. Do NOT re-spawn them.
-- Teammates will use \`SendMessage\` to report their results back to you automatically.
-- Once you receive all results via SendMessage, just summarize them for the user. Done.
-- Do NOT spawn new teammates to "shut down" or "clean up" — they stop on their own.
-- Do NOT spawn a teammate again if they already completed and reported back.
+## ABSOLUTELY FORBIDDEN — READ THIS CAREFULLY
+- NEVER call the Agent tool more than once per specialist per task.
+- NEVER re-spawn a teammate that already reported back. They shut down automatically.
+- NEVER use phrases like "let me shut them down" — you cannot and should not shut them down.
+- When teammates send you their results via SendMessage, simply present the summary to the user. That is ALL you do. Do not call Agent again.
+- The ONLY time you call Agent is at the START to spawn teammates. After that, ZERO Agent calls.
 `;
 
 interface ActiveSession {

@@ -181,6 +181,12 @@ export class HookReceiver {
               },
             });
           }
+
+          // If ALL agents are now idle (no active collabs), set CEA to IDLE too
+          if (activeCollabs.size === 0) {
+            console.log(`[Hook] All teammates done — setting CEA to IDLE`);
+            await this.updateAgentStatus('cea', 'IDLE');
+          }
         }
         // Clean up ID mapping
         agentIdToName.delete(agentId);
