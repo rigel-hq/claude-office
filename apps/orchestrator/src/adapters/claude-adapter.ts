@@ -13,6 +13,8 @@ interface ActiveCLI {
   emit: (stream: EventStream, data: AgentEvent['data'], agentId?: string) => Promise<void>;
   /** Active teammate agent IDs that haven't completed yet */
   activeTeammates: Set<string>;
+  /** Whether we're polling for teammate completion */
+  pollingForCompletion?: boolean;
 }
 
 export class ClaudeAdapter implements GatewayAdapter {
@@ -182,9 +184,26 @@ export class ClaudeAdapter implements GatewayAdapter {
   ): Promise<void> {
     const type = msg.type as string;
     const subtype = (msg.subtype as string) ?? '';
-    // Log every message type for debugging
-    if (type !== 'user' || (msg.tool_use_result as Record<string, unknown>)) {
-      console.log(`[Claude] MSG: type=${type} subtype=${subtype} parent_tool_use_id=${msg.parent_tool_use_id ?? 'none'}`);
+    // Log every message type for debugging (with content preview for assistants)
+    if (type === 'assistant') {
+      const message = msg.message as Record<string, unknown>;
+      const content = message?.content as Array<Record<string, unknown>>;
+      const preview = content?.map(b => b.type === 'text' ? `text:"${(b.text as string)?.slice(0, 80)}"` : `tool:${b.name}`).join(', ') ?? '';
+      console.log(`[Claude] MSG: type=${type} parent=${msg.parent_tool_use_id ?? 'none'} content=[${preview}]`);
+    } else if (type !== 'user' || (msg.tool_use_result as Record<string, unknown>)) {
+      console.log(`[Claude] MSG: type=${type} subtype=${subtype} parent=${msg.parent_tool_use_id ?? 'none'}`);
+    } else if (type === 'user') {
+      // Check for tool results with content
+      const message = msg.message as Record<string, unknown>;
+      const content = message?.content as Array<Record<string, unknown>>;
+      if (content) {
+        for (const block of content) {
+          if (block.type === 'tool_result') {
+            const text = typeof block.content === 'string' ? block.content.slice(0, 80) : JSON.stringify(block.content)?.slice(0, 80);
+            console.log(`[Claude] MSG: type=user tool_result for=${block.tool_use_id} content="${text}"`);
+          }
+        }
+      }
     }
 
     if (type === 'system') {
@@ -273,8 +292,12 @@ export class ClaudeAdapter implements GatewayAdapter {
         }
       }
     } else if (type === 'result') {
-      console.log(`[Claude] Result: ${msg.subtype} (session stays alive for teammates)`);
-      // Don't emit lifecycle:end — the CLI process stays alive for teammates
+      console.log(`[Claude] Result: ${msg.subtype} (${cli.activeTeammates.size} active teammates)`);
+      // If teammates are still active, start polling for their completion
+      if (cli.activeTeammates.size > 0 && !cli.pollingForCompletion) {
+        cli.pollingForCompletion = true;
+        this.pollTeammateCompletion(cli, emit);
+      }
     } else if (type === 'user') {
       // Tool results / user messages — check for teammate events
       const toolResult = msg.tool_use_result as Record<string, unknown> | undefined;
@@ -311,6 +334,47 @@ export class ClaudeAdapter implements GatewayAdapter {
         }
       }
     }
+  }
+
+  /** Poll for teammate process completion by checking child processes */
+  private pollTeammateCompletion(
+    cli: ActiveCLI,
+    emit: (stream: EventStream, data: AgentEvent['data'], agentId?: string) => Promise<void>,
+  ): void {
+    const parentPid = cli.proc.pid;
+    if (!parentPid) return;
+
+    const interval = setInterval(async () => {
+      if (cli.activeTeammates.size === 0) {
+        clearInterval(interval);
+        cli.pollingForCompletion = false;
+        return;
+      }
+
+      try {
+        // Check if any child claude processes of the parent are still running
+        const { execSync } = await import('child_process');
+        const result = execSync(`pgrep -P ${parentPid} 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+        const childPids = result.split('\n').filter(p => p.trim());
+
+        // Also check for teammate processes (not direct children, but spawned by the parent's children)
+        const allClaude = execSync(`ps aux | grep "claude.*model.*sonnet" | grep -v grep | wc -l`, { encoding: 'utf-8' }).trim();
+        const teammateCount = parseInt(allClaude) || 0;
+
+        if (teammateCount === 0 && cli.activeTeammates.size > 0) {
+          console.log(`[Claude] All teammate processes exited — marking ${cli.activeTeammates.size} as completed`);
+          for (const name of cli.activeTeammates) {
+            await emit('lifecycle', { phase: 'end' }, name);
+            console.log(`[Claude] Teammate completed (via poll): ${name}`);
+          }
+          cli.activeTeammates.clear();
+          clearInterval(interval);
+          cli.pollingForCompletion = false;
+        }
+      } catch {
+        // ps/pgrep failed — ignore
+      }
+    }, 5000); // Poll every 5 seconds
   }
 
   async listSessions(): Promise<SessionInfo[]> {
