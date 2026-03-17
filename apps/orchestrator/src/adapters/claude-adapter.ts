@@ -295,11 +295,7 @@ export class ClaudeAdapter implements GatewayAdapter {
       }
     } else if (type === 'result') {
       console.log(`[Claude] Result: ${msg.subtype} (${cli.activeTeammates.size} active teammates)`);
-      // Only set CEA to IDLE if no teammates are still working
-      // If teammates are active, CEA is still coordinating (waiting for results)
-      if (cli.activeTeammates.size === 0) {
-        await emit('lifecycle', { phase: 'end' });
-      }
+      // CEA status is managed by hooks (SubagentStart sets THINKING, last SubagentStop sets IDLE)
       // If teammates are still active, start polling for their completion
       if (cli.activeTeammates.size > 0 && !cli.pollingForCompletion) {
         cli.pollingForCompletion = true;

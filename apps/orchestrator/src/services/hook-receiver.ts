@@ -121,6 +121,12 @@ export class HookReceiver {
           });
         }
 
+        // CEA is actively coordinating while teammates work
+        if (activeCollabs.size === 0) {
+          // First teammate — CEA transitions from IDLE to THINKING
+          await this.updateAgentStatus('cea', 'THINKING');
+        }
+
         // If this is a known specialist, activate them in the UI
         if (agentName && AGENT_ROLE_MAP.has(agentName)) {
           await this.updateAgentStatus(agentName, 'THINKING');
@@ -196,6 +202,11 @@ export class HookReceiver {
       case 'PreToolUse': {
         // Agent is about to use a tool — resolve name and show as TOOL_CALLING
         const resolvedName = agentIdToName.get(agentId) ?? agentId;
+        // If no agentId, this is the team lead using a tool
+        if (!agentId && toolName) {
+          await this.updateAgentStatus('cea', 'TOOL_CALLING');
+          break;
+        }
         if (stoppedAgents.has(agentId) || stoppedAgents.has(resolvedName)) break; // ignore late events
         if (resolvedName && AGENT_ROLE_MAP.has(resolvedName)) {
           await this.updateAgentStatus(resolvedName, 'TOOL_CALLING');
@@ -215,6 +226,12 @@ export class HookReceiver {
       case 'PostToolUse': {
         // Agent finished using a tool — resolve name
         const resolvedName = agentIdToName.get(agentId) ?? agentId;
+        // If no agentId, this is the team lead
+        if (!agentId && toolName) {
+          // After team lead uses a tool, set to THINKING (will be set to SPEAKING by assistant messages)
+          await this.updateAgentStatus('cea', 'THINKING');
+          break;
+        }
         if (stoppedAgents.has(agentId) || stoppedAgents.has(resolvedName)) break; // ignore late events
         if (resolvedName && AGENT_ROLE_MAP.has(resolvedName)) {
           await this.updateAgentStatus(resolvedName, 'THINKING');
@@ -260,6 +277,8 @@ export class HookReceiver {
 
       case 'UserPromptSubmit': {
         console.log(`[Hook] User prompt submitted: session=${sessionId?.slice(0, 8)}`);
+        // CEA starts processing — set to THINKING
+        await this.updateAgentStatus('cea', 'THINKING');
         break;
       }
 

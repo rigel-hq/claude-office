@@ -236,36 +236,11 @@ export class SessionGateway {
   // ---------------------------------------------------------------------------
 
   /** Handle events from the CLI stdout stream.
-   *  ONLY updates CEA (team lead) status — specialist statuses come from hooks. */
+   *  Status updates for ALL agents (including CEA) come from hooks now.
+   *  This only publishes raw events to the bus for the activity feed + chat. */
   private async handleEvent(event: AgentEvent): Promise<void> {
-    // Publish all events to the bus (UI gets everything)
+    // Publish all events to the bus (UI gets everything — activity feed, chat)
     await this.eventBus.publish(event);
-
-    // Only update CEA status from stdout — specialists are handled by hooks
-    const agentId = event.agentId;
-    if (agentId !== 'cea') return;
-
-    const status = this.mapEventToStatus(event);
-    if (!status) return;
-
-    const roleMeta = AGENT_ROLE_MAP.get(agentId);
-    if (!roleMeta) return;
-
-    await this.db.agent.upsert({
-      where: { configId: agentId },
-      update: { status },
-      create: {
-        configId: agentId,
-        name: roleMeta.name,
-        role: roleMeta.role,
-        icon: roleMeta.icon,
-        status,
-      },
-    });
-
-    await this.eventBus.publishStatus(agentId, status);
-
-    // Collaboration lines are now handled by hooks (SubagentStart/Stop)
   }
 
   private mapEventToStatus(event: AgentEvent): AgentStatus | null {
